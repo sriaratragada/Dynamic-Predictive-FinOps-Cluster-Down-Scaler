@@ -47,6 +47,24 @@ class PrometheusClient:
             '[7d:5m])'
         )
 
+    def per_node_gpu_usage(self) -> Dict[str, float]:
+        """
+        Returns {node_name: gpu_utilisation_fraction (0.0–1.0)} from DCGM exporter.
+
+        Requires nvidia/dcgm-exporter deployed in the cluster and scraping by
+        Prometheus.  DCGM_FI_DEV_GPU_UTIL is a 0–100 gauge (percent); we average
+        across all GPUs on each node and normalise to 0.0–1.0.
+
+        Label precedence: ``kubernetes_node`` (dcgm-exporter default) then ``node``.
+        """
+        results = self.query(
+            "avg by (kubernetes_node) (DCGM_FI_DEV_GPU_UTIL / 100)"
+        )
+        return {
+            r["metric"].get("kubernetes_node", r["metric"].get("node", "unknown")): float(r["value"][1])
+            for r in results
+        }
+
     def query_range(self, promql: str, start: float, end: float, step: int = 300) -> list:
         """Range query returning [[timestamp, value_str], ...] for use with Prophet."""
         resp = requests.get(

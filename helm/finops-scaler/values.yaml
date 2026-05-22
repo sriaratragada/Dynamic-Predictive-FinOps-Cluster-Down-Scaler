@@ -57,6 +57,14 @@ config:
   # Demo / local mode — synthetic data, no cluster required
   demoMode: "false"
 
+  # GPU-aware cordoning (optional — requires nvidia/dcgm-exporter + Prometheus scraping)
+  # When "true", nodes with nvidia.com/gpu allocatable use GPU utilisation
+  # (DCGM_FI_DEV_GPU_UTIL) as the cordon signal instead of CPU.
+  enableGpuAware: "false"
+
+  # Fraction 0.0–1.0 of GPU utilisation below which a GPU node is cordoned
+  gpuIdleThreshold: "0.10"
+
 resources:
   requests:
     cpu: "50m"

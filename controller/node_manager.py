@@ -29,23 +29,47 @@ class NodeManager:
         prometheus: PrometheusClient,
         state_store: "StateStore",
         dry_run: bool = False,
+        enable_gpu_aware: bool = False,
+        gpu_idle_threshold: float = 0.10,
     ):
         self._core = core_api
         self._prom = prometheus
         self._state = state_store
         self._dry_run = dry_run
+        self._enable_gpu_aware = enable_gpu_aware
+        self._gpu_idle_threshold = gpu_idle_threshold
 
     # ------------------------------------------------------------------
     # Discovery
     # ------------------------------------------------------------------
 
     def get_underutilised_nodes(self, threshold: float) -> List[str]:
-        """Return worker node names whose CPU usage ratio is below *threshold*."""
+        """Return worker node names whose utilisation is below *threshold*.
+
+        For nodes with ``nvidia.com/gpu`` allocatable resources (when
+        ``enable_gpu_aware=True``), GPU utilisation from the DCGM exporter
+        is used as the signal.  If DCGM data is unavailable for a GPU node
+        that node is skipped entirely (not cordoned) rather than falling back
+        to CPU — GPU nodes are too expensive to cordon on stale data.
+
+        All non-GPU nodes, and all nodes when ``enable_gpu_aware=False``,
+        use the standard CPU utilisation ratio.
+        """
         try:
             cpu_map: Dict[str, float] = self._prom.per_node_cpu_usage()
         except Exception as exc:
             logger.warning("Cannot fetch node CPU metrics from Prometheus: %s", exc)
             return []
+
+        gpu_map: Dict[str, float] = {}
+        if self._enable_gpu_aware:
+            try:
+                gpu_map = self._prom.per_node_gpu_usage()
+                logger.debug("DCGM GPU metrics fetched for %d node(s)", len(gpu_map))
+            except Exception as exc:
+                logger.warning(
+                    "Cannot fetch DCGM GPU metrics — GPU nodes will be skipped: %s", exc
+                )
 
         underutil = []
         for node in self._core.list_node().items:
@@ -55,6 +79,23 @@ class NodeManager:
             if any(lbl in labels for lbl in _CONTROL_PLANE_LABELS):
                 continue  # never touch control-plane nodes
 
+            # ── GPU-aware path ────────────────────────────────────────────────
+            if self._enable_gpu_aware and _is_gpu_node(node):
+                if name not in gpu_map:
+                    logger.debug(
+                        "No DCGM data for GPU node %s — skipping cordon candidate", name
+                    )
+                    continue
+                gpu_util = gpu_map[name]
+                if gpu_util < self._gpu_idle_threshold:
+                    logger.info(
+                        "Node %s (GPU) is underutilised: %.1f%% GPU (threshold %.0f%%)",
+                        name, gpu_util * 100, self._gpu_idle_threshold * 100,
+                    )
+                    underutil.append(name)
+                continue  # handled; skip CPU check below
+
+            # ── CPU path (all non-GPU nodes) ──────────────────────────────────
             allocatable_cpu = _parse_cpu(
                 (node.status.allocatable or {}).get("cpu", "1")
             )
@@ -182,3 +223,13 @@ def _parse_cpu(cpu_str: str) -> float:
     if cpu_str.endswith("m"):
         return int(cpu_str[:-1]) / 1000.0
     return float(cpu_str)
+
+
+def _is_gpu_node(node: client.V1Node) -> bool:
+    """Return True if the node advertises nvidia.com/gpu allocatable capacity."""
+    allocatable = node.status.allocatable or {}
+    gpu_alloc = allocatable.get("nvidia.com/gpu", "0")
+    try:
+        return int(gpu_alloc) > 0
+    except (ValueError, TypeError):
+        return False

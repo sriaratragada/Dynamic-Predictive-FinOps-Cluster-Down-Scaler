@@ -65,16 +65,22 @@ def run():
     scaler = DeploymentScaler(
         apps_api, cfg.namespace_filter, cfg.min_replica_floor, dry_run=cfg.dry_run
     )
-    node_mgr = NodeManager(core_api, prometheus, state_store, dry_run=cfg.dry_run)
+    node_mgr = NodeManager(
+        core_api, prometheus, state_store,
+        dry_run=cfg.dry_run,
+        enable_gpu_aware=cfg.enable_gpu_aware,
+        gpu_idle_threshold=cfg.gpu_idle_threshold,
+    )
 
     already_scaled_down = bool(state_store.load_replicas())
     logger.info(
-        "Controller started (loop=%ds, tz=%s, dry_run=%s, demo=%s, prophet=%s, recovered=%s)",
+        "Controller started (loop=%ds, tz=%s, dry_run=%s, demo=%s, prophet=%s, gpu_aware=%s, recovered=%s)",
         cfg.loop_interval_seconds,
         cfg.timezone,
         cfg.dry_run,
         _DEMO_MODE,
         cfg.enable_prophet,
+        cfg.enable_gpu_aware,
         already_scaled_down,
     )
 

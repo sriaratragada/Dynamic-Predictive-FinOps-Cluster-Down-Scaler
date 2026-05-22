@@ -30,6 +30,8 @@ def cfg():
         prophet_training_weeks=4,
         prophet_idle_threshold_cores=0.5,
         prophet_retrain_hours=6,
+        enable_gpu_aware=False,
+        gpu_idle_threshold=0.10,
     )
 
 

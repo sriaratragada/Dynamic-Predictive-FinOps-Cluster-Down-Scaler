@@ -63,3 +63,12 @@ data:
   # ── Demo / local mode ───────────────────────────────────────────────
   # Set to "true" to run with synthetic data (no K8s cluster or Prometheus needed)
   DEMO_MODE: "false"
+
+  # ── GPU-aware cordoning (optional) ─────────────────────────────────
+  # Requires nvidia/dcgm-exporter deployed and scraped by Prometheus.
+  # When "true", nodes with nvidia.com/gpu allocatable use GPU utilisation
+  # (DCGM_FI_DEV_GPU_UTIL) as the cordon signal instead of CPU.
+  ENABLE_GPU_AWARE: "false"
+
+  # Fraction 0.0–1.0 of GPU utilisation below which a GPU node is cordoned
+  GPU_IDLE_THRESHOLD: "0.10"

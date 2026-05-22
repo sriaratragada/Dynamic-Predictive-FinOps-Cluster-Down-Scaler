@@ -29,6 +29,11 @@ class Config:
     prophet_training_weeks: int
     prophet_idle_threshold_cores: float
     prophet_retrain_hours: int
+    # GPU-aware cordoning (optional — requires DCGM exporter in the cluster)
+    # When enabled, nodes with nvidia.com/gpu allocatable use GPU utilisation
+    # (via DCGM_FI_DEV_GPU_UTIL) instead of CPU as the cordon signal.
+    enable_gpu_aware: bool
+    gpu_idle_threshold: float   # fraction 0.0–1.0; below this → cordon
 
 
 def load_config() -> Config:
@@ -52,4 +57,6 @@ def load_config() -> Config:
         prophet_training_weeks=int(os.environ.get("PROPHET_TRAINING_WEEKS", "4")),
         prophet_idle_threshold_cores=float(os.environ.get("PROPHET_IDLE_THRESHOLD_CORES", "0.5")),
         prophet_retrain_hours=int(os.environ.get("PROPHET_RETRAIN_HOURS", "6")),
+        enable_gpu_aware=os.environ.get("ENABLE_GPU_AWARE", "false").lower() == "true",
+        gpu_idle_threshold=float(os.environ.get("GPU_IDLE_THRESHOLD", "0.10")),
     )

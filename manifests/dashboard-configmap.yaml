@@ -6,13 +6,44 @@ metadata:
   labels:
     app.kubernetes.io/name: finops-dashboard
 data:
-  CLOUD_PROVIDER: "aws"
-  NODE_INSTANCE_TYPE: "m5.xlarge"
-  NODE_HOURLY_COST: "0.192"
-  AWS_REGION: "us-east-1"
+  # ── Connection ────────────────────────────────────────────────────────
   PROMETHEUS_URL: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+  DEMO_MODE: "false"
+
+  # ── Cloud & Pricing ───────────────────────────────────────────────────
+  CLOUD_PROVIDER: "aws"                # aws | gcp | manual
+  NODE_INSTANCE_TYPE: "m5.xlarge"
+  NODE_HOURLY_COST: "0.192"           # fallback when cloud pricing is unavailable
+  AWS_REGION: "us-east-1"
+
+  # ── State ConfigMaps ──────────────────────────────────────────────────
   STATE_CONFIGMAP_NAME: "finops-scaler-state"
   STATE_CONFIGMAP_NS: "kube-system"
   SAVINGS_CONFIGMAP_NAME: "finops-savings-state"
+
+  # ── Schedule (mirrors controller settings for display) ───────────────
+  BUSINESS_HOURS_START: "07:00"
+  BUSINESS_HOURS_END: "19:00"
+  BUSINESS_DAYS: "0,1,2,3,4"          # 0=Mon … 6=Sun
+  TIMEZONE: "UTC"
+  PREWARM_MINUTES: "15"
+
+  # ── Prediction ────────────────────────────────────────────────────────
+  ENABLE_METRIC_OVERRIDE: "false"
+  ENABLE_PROPHET: "false"
+  PROPHET_TRAINING_WEEKS: "4"
+  PROPHET_IDLE_THRESHOLD_CORES: "0.5"
+  PROPHET_RETRAIN_HOURS: "6"
+
+  # ── Dashboard UX ─────────────────────────────────────────────────────
   DASHBOARD_PORT: "8090"
   CORS_ORIGINS: "*"
+  POLL_INTERVAL_SECONDS: "30"
+  NODE_UTILISATION_THRESHOLD: "0.10"
+  NAMESPACE_FILTER: ""
+  MIN_REPLICA_FLOOR: "0"
+
+  # ── AI Pre-Warm Engine (optional) ────────────────────────────────────
+  # Proactively boots Knative AI containers on early user-intent signals.
+  # Enable only on high-conversion AI feature pages.
+  ENABLE_PREWARM: "false"

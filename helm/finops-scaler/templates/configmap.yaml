@@ -26,3 +26,5 @@ data:
   PROPHET_IDLE_THRESHOLD_CORES: {{ .Values.config.prophetIdleThresholdCores | quote }}
   PROPHET_RETRAIN_HOURS: {{ .Values.config.prophetRetrainHours | quote }}
   DEMO_MODE: {{ .Values.config.demoMode | quote }}
+  ENABLE_GPU_AWARE: {{ .Values.config.enableGpuAware | quote }}
+  GPU_IDLE_THRESHOLD: {{ .Values.config.gpuIdleThreshold | quote }}

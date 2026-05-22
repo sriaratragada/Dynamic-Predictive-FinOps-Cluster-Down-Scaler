@@ -161,3 +161,122 @@ def test_cordon_dry_run_does_not_patch_node(mock_core_api, mock_prometheus, mock
     mock_state_store.load_cordoned_nodes.return_value = []
     mgr.cordon("worker-1")
     mock_core_api.patch_node.assert_not_called()
+
+
+# ------------------------------------------------------------------
+# GPU-aware cordoning
+# ------------------------------------------------------------------
+
+def _gpu_node(name: str, gpu_count: int = 4, allocatable_cpu: str = "32") -> client.V1Node:
+    """Create a mock node with nvidia.com/gpu in its allocatable resources."""
+    node = MagicMock(spec=client.V1Node)
+    node.metadata.name = name
+    node.metadata.labels = {}
+    node.status.allocatable = {"cpu": allocatable_cpu, "nvidia.com/gpu": str(gpu_count)}
+    return node
+
+
+def test_gpu_node_below_threshold_is_cordoned(mock_core_api, mock_prometheus, mock_state_store):
+    """GPU node whose GPU utilisation is below the threshold is flagged."""
+    mgr = NodeManager(
+        mock_core_api, mock_prometheus, mock_state_store,
+        enable_gpu_aware=True, gpu_idle_threshold=0.10,
+    )
+    node = _gpu_node("gpu-node-1")
+    mock_core_api.list_node.return_value.items = [node]
+    mock_prometheus.per_node_cpu_usage.return_value = {"gpu-node-1": 28.0}  # high CPU (irrelevant)
+    mock_prometheus.per_node_gpu_usage.return_value = {"gpu-node-1": 0.04}  # 4% GPU < 10%
+    result = mgr.get_underutilised_nodes(threshold=0.10)
+    assert "gpu-node-1" in result
+
+
+def test_gpu_node_above_threshold_not_cordoned(mock_core_api, mock_prometheus, mock_state_store):
+    """GPU node whose GPU utilisation exceeds the threshold is left alone."""
+    mgr = NodeManager(
+        mock_core_api, mock_prometheus, mock_state_store,
+        enable_gpu_aware=True, gpu_idle_threshold=0.10,
+    )
+    node = _gpu_node("gpu-node-1")
+    mock_core_api.list_node.return_value.items = [node]
+    mock_prometheus.per_node_cpu_usage.return_value = {}
+    mock_prometheus.per_node_gpu_usage.return_value = {"gpu-node-1": 0.82}  # 82% GPU > 10%
+    result = mgr.get_underutilised_nodes(threshold=0.10)
+    assert result == []
+
+
+def test_gpu_aware_disabled_uses_cpu_for_gpu_node(mock_core_api, mock_prometheus, mock_state_store):
+    """When enable_gpu_aware=False, GPU nodes are evaluated by CPU like any other node."""
+    mgr = NodeManager(
+        mock_core_api, mock_prometheus, mock_state_store,
+        enable_gpu_aware=False,
+    )
+    node = _gpu_node("gpu-node-1")
+    mock_core_api.list_node.return_value.items = [node]
+    mock_prometheus.per_node_cpu_usage.return_value = {"gpu-node-1": 0.5}  # 0.5 / 32 ≈ 1.6% < 10%
+    result = mgr.get_underutilised_nodes(threshold=0.10)
+    assert "gpu-node-1" in result
+
+
+def test_gpu_node_without_dcgm_data_is_skipped(mock_core_api, mock_prometheus, mock_state_store):
+    """GPU node with no DCGM entry in the result is skipped (not cordoned)."""
+    mgr = NodeManager(
+        mock_core_api, mock_prometheus, mock_state_store,
+        enable_gpu_aware=True, gpu_idle_threshold=0.10,
+    )
+    node = _gpu_node("gpu-node-1")
+    mock_core_api.list_node.return_value.items = [node]
+    mock_prometheus.per_node_cpu_usage.return_value = {}
+    mock_prometheus.per_node_gpu_usage.return_value = {}  # DCGM returned no data for this node
+    result = mgr.get_underutilised_nodes(threshold=0.10)
+    assert result == []
+
+
+def test_dcgm_failure_skips_gpu_nodes_keeps_cpu_nodes(
+    mock_core_api, mock_prometheus, mock_state_store
+):
+    """When the DCGM query throws, GPU nodes are skipped; CPU nodes still evaluated."""
+    mgr = NodeManager(
+        mock_core_api, mock_prometheus, mock_state_store,
+        enable_gpu_aware=True, gpu_idle_threshold=0.10,
+    )
+    gpu_node = _gpu_node("gpu-node-1")
+    cpu_node = _node("cpu-node-1")
+    mock_core_api.list_node.return_value.items = [gpu_node, cpu_node]
+    mock_prometheus.per_node_cpu_usage.return_value = {
+        "gpu-node-1": 0.05,   # low CPU (irrelevant — DCGM will fail)
+        "cpu-node-1": 0.05,   # 0.05 / 4 = 1.25% < 10%
+    }
+    mock_prometheus.per_node_gpu_usage.side_effect = Exception("dcgm-exporter unavailable")
+    result = mgr.get_underutilised_nodes(threshold=0.10)
+    assert "gpu-node-1" not in result   # skipped — no DCGM data
+    assert "cpu-node-1" in result        # CPU node evaluated normally
+
+
+def test_mixed_cluster_each_node_uses_correct_metric(
+    mock_core_api, mock_prometheus, mock_state_store
+):
+    """Mixed cluster: GPU nodes use GPU util, CPU nodes use CPU util independently."""
+    mgr = NodeManager(
+        mock_core_api, mock_prometheus, mock_state_store,
+        enable_gpu_aware=True, gpu_idle_threshold=0.10,
+    )
+    gpu_idle = _gpu_node("gpu-idle")
+    gpu_busy = _gpu_node("gpu-busy")
+    cpu_idle = _node("cpu-idle")
+    cpu_busy = _node("cpu-busy")
+    mock_core_api.list_node.return_value.items = [gpu_idle, gpu_busy, cpu_idle, cpu_busy]
+    mock_prometheus.per_node_cpu_usage.return_value = {
+        "gpu-idle": 30.0,   # high CPU (irrelevant for GPU node)
+        "gpu-busy": 28.0,
+        "cpu-idle": 0.1,    # 0.1 / 4 = 2.5% < 10%
+        "cpu-busy": 3.8,    # 3.8 / 4 = 95% > 10%
+    }
+    mock_prometheus.per_node_gpu_usage.return_value = {
+        "gpu-idle": 0.03,   # 3% GPU < 10% → cordon
+        "gpu-busy": 0.91,   # 91% GPU > 10% → keep
+    }
+    result = mgr.get_underutilised_nodes(threshold=0.10)
+    assert "gpu-idle" in result
+    assert "gpu-busy" not in result
+    assert "cpu-idle" in result
+    assert "cpu-busy" not in result
