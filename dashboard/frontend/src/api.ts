@@ -72,6 +72,8 @@ export interface ConfigData {
   node_utilisation_threshold: number
   namespace_filter: string
   min_replica_floor: number
+  // Pre-Warm Engine
+  enable_prewarm: boolean
 }
 
 async function get<T>(url: string): Promise<T> {

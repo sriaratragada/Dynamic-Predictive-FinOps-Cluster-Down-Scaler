@@ -46,6 +46,13 @@ class DashboardConfig:
     namespace_filter: str = ""
     min_replica_floor: int = 0
 
+    # ── Pre-Warm Engine (optional) ────────────────────────────────────
+    # Proactively boots Knative AI containers on early user-intent signals
+    # (login, hover, input focus) so the pod is warm before the user submits.
+    # Enable only on high-conversion AI feature pages where cold-start delay
+    # is directly user-facing.  Off by default.
+    enable_prewarm: bool = False
+
 
 _cfg = DashboardConfig(
     prometheus_url=os.environ.get("PROMETHEUS_URL", "http://prometheus:9090"),
@@ -67,6 +74,7 @@ _cfg = DashboardConfig(
     node_utilisation_threshold=float(os.environ.get("NODE_UTILISATION_THRESHOLD", "0.10")),
     namespace_filter=os.environ.get("NAMESPACE_FILTER", ""),
     min_replica_floor=int(os.environ.get("MIN_REPLICA_FLOOR", "0")),
+    enable_prewarm=_bool(os.environ.get("ENABLE_PREWARM", "false")),
 )
 
 _PRICING_KEYS = {"cloud_provider", "instance_type", "aws_region", "node_hourly_cost"}

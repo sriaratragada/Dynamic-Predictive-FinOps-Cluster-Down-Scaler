@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config_store, pricing
 from .k8s_client import K8sReader
+from .prewarm import get_controller as _get_prewarm
 from .savings_tracker import SavingsTracker
 
 logging.basicConfig(
@@ -30,7 +31,7 @@ app = FastAPI(title="FinOps Dashboard API", docs_url="/api/docs", redoc_url=None
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["GET", "PATCH"],
+    allow_methods=["GET", "PATCH", "POST"],
     allow_headers=["*"],
 )
 
@@ -117,6 +118,45 @@ async def patch_config(request: Request):
     updated = config_store.patch(updates)
     logger.info("Config updated: %s", list(updates.keys()))
     return config_store.as_dict()
+
+
+# ------------------------------------------------------------------
+# Pre-warm route
+# ------------------------------------------------------------------
+
+@app.post("/api/prewarm")
+async def api_prewarm(request: Request):
+    """
+    Receive an early-intent signal from a frontend client and proactively
+    boot the target Knative AI container before the user submits a prompt.
+
+    Body (JSON):
+        service_url  str   Full URL of the Knative service to pre-warm
+                           e.g. "http://model-api.default.svc.cluster.local"
+        signal       str   Intent signal type: login | page_load | hover | input_focus
+        user_id      str   (optional) Opaque user identifier for log correlation
+
+    Returns:
+        status  "warm" | "warming" | "cold"
+        action  "none" | "prewarm_triggered"
+
+    Disabled (returns {enabled: false}) when config.enable_prewarm is false.
+    """
+    cfg = config_store.get()
+    if not cfg.enable_prewarm:
+        return {"enabled": False, "action": "none"}
+
+    body = await request.json()
+    service_url: str = (body.get("service_url") or "").strip()
+    if not service_url:
+        from fastapi import HTTPException  # noqa: PLC0415
+        raise HTTPException(status_code=422, detail="service_url is required")
+
+    signal = str(body.get("signal", "unknown"))
+    user_id = body.get("user_id")
+
+    controller = _get_prewarm()
+    return await controller.handle_signal(service_url, signal, user_id)
 
 
 # ------------------------------------------------------------------

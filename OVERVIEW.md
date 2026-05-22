@@ -28,6 +28,7 @@
 - **💾 Survives restarts** — State (original replica counts, cordoned nodes) persisted in a Kubernetes ConfigMap
 - **💰 Tracks every dollar saved** — Background task prices each cordon/uncordon cycle against live AWS/GCP rates
 - **🧪 Demo mode** — Synthetic cluster simulation; runs locally with no Kubernetes, no Prometheus, no cloud account
+- **⚡ Smart Pre-Warm Engine** *(optional)* — Listens for early user-intent signals (login, hover, input focus) and proactively boots Knative AI containers before the user submits a prompt, eliminating cold-start latency on high-conversion pages
 
 ---
 
@@ -328,6 +329,124 @@ flowchart LR
 
 ---
 
+## ⚡ Smart Pre-Warm Engine *(optional)*
+
+> **For high-conversion AI feature pages only.** When a user logs in or navigates to an AI feature, the engine proactively boots the Knative model container before they submit a prompt — so they never wait for a cold start.
+
+### The problem
+
+Scaling serverless AI containers to zero saves money when traffic is idle, but the next user pays a cold-start penalty while the container boots and loads model weights (typically 15–60 seconds for large models). On a high-conversion page — an AI demo, a chat product, an inference feature users pay for — that delay is a drop-off event.
+
+### How it works
+
+Knative has no "pre-warm" API. It scales up in response to real HTTP traffic. The engine exploits this: it sends a lightweight HTTP request to the Knative service the moment an intent signal arrives from the frontend. By the time the user submits their prompt, the pod is already warm.
+
+```mermaid
+sequenceDiagram
+  participant F as Frontend
+  participant H as Signal Handler<br/>POST /api/prewarm
+  participant A as Knative Activator
+  participant M as Model Container
+
+  F->>H: login event fires
+  H->>H: service cold? not in-flight?
+  H-->>F: {action: "prewarm_triggered"} (immediate)
+  H->>A: GET /model-service  X-Prewarm: true  [async]
+
+  Note over A: 0 pods → activator buffers request,<br/>triggers autoscaler
+  A->>M: Container start + model weight load
+  Note over M: 15–45 s cold-start completes
+
+  Note over F,M: user browses, reads docs, fills a form...
+
+  F->>A: POST /model-service  {prompt: "..."}
+  Note over A: Pod already warm → forward immediately
+  A->>M: Inference request (no wait)
+  M-->>F: Result  ←  zero cold-start delay
+```
+
+### Signal types
+
+| Signal | Confidence | When to fire | Typical window to first prompt |
+|:-------|:----------:|:-------------|:-------------------------------|
+| `login` | 0.95 | User authenticates | 30–120 s |
+| `input_focus` | 0.90 | User focuses the prompt input | 5–30 s |
+| `page_load` | 0.65 | User navigates to the AI feature page | 20–60 s |
+| `hover` | 0.50 | User hovers AI call-to-action ≥ 500 ms | 5–20 s |
+
+The cold-start window must fit inside the signal-to-submit window. `login` is the safest signal; `hover` is riskier for slow cold-starts.
+
+### When to enable
+
+> [!IMPORTANT]
+> **Enable when all three are true:**
+> 1. Your model container cold-start is **> 10 seconds**
+> 2. You have a **dedicated AI feature page** — users navigate there specifically to use the AI
+> 3. There is a **predictable user journey** before the first prompt (login → navigate → type)
+>
+> **Do not enable** when cold-start is < 5 s, traffic is constant enough that pods never reach zero, or users arrive directly at the inference endpoint.
+
+### Architecture
+
+```
+dashboard/backend/prewarm.py   ← PrewarmController
+  ├─ warm cache    dict[service_url → expiry]   per-service warm state, 180 s TTL
+  ├─ inflight set  set[service_url]              prevents duplicate in-flight pings
+  └─ _ping()       async httpx GET              fires and forgets; marks warm on success
+
+POST /api/prewarm              ← FastAPI route in app.py
+  ├─ reads  config.enable_prewarm  (off by default)
+  ├─ reads  body.service_url, body.signal, body.user_id
+  └─ delegates to PrewarmController.handle_signal()
+```
+
+### Enabling
+
+Toggle **⚙ Settings → Prediction → AI Pre-Warm Engine** in the dashboard UI, or set the environment variable:
+
+```bash
+ENABLE_PREWARM=true
+```
+
+### Wiring frontend signals
+
+Add this snippet to the pages where you want pre-warming. It is fire-and-forget — failures are silently ignored so it never affects the user-facing flow:
+
+```javascript
+async function signalPrewarm(serviceUrl, signal = 'hover') {
+  try {
+    await fetch('/api/prewarm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service_url: serviceUrl, signal }),
+    })
+  } catch {} // non-critical — never let this break the page
+}
+
+// Hook into the events that predict AI usage on your page
+document.querySelector('#login-btn').addEventListener('click', () =>
+  signalPrewarm('http://model-api.default.svc.cluster.local', 'login'))
+
+document.querySelector('#ai-feature-btn').addEventListener('mouseover', () =>
+  signalPrewarm('http://model-api.default.svc.cluster.local', 'hover'))
+
+document.querySelector('#prompt-input').addEventListener('focus', () =>
+  signalPrewarm('http://model-api.default.svc.cluster.local', 'input_focus'))
+```
+
+If your model service handles the `X-Prewarm: true` header, it can skip inference and return 200 immediately — reducing the cost of the ping request. Without this, the pre-warm request runs a real inference, which still warms the pod correctly.
+
+### Overhead analysis
+
+| Concern | Reality |
+|:--------|:--------|
+| False positives (user signals but never submits) | Pod idles for ≤ 3 min then scales to zero. Cost: fractions of a cent per event. |
+| Duplicate signals (same service, many users) | In-flight set prevents concurrent pings to the same URL. |
+| Signal fires too late | Increase lead time: use `login` or `page_load` instead of `hover`. |
+| Pod cools down before user submits | Raise Knative `scale-to-zero-grace-period`. The 180 s warm cache TTL is set conservatively. |
+
+---
+
 ## Tech Stack
 
 | Layer | Technology | Role |
@@ -349,6 +468,8 @@ flowchart LR
 | | Recharts | ComposedChart — area (CPU used) + line (capacity) + event markers |
 | | `SettingsPanel.tsx` | Slide-in drawer — 5 sections, save via `PATCH /api/config`, toast feedback |
 | | `DemoBanner.tsx` | First-run hint — opens Settings, dismissible per-session |
+| **Pre-Warm Engine** | `prewarm.py` | `PrewarmController` — warm cache, in-flight dedup, async Knative ping |
+| | `POST /api/prewarm` | Signal endpoint — accepts login/hover/focus events, fires pre-warm if cold |
 | | Vite | Build tooling + `/api` proxy for local dev |
 | **Persistence** | Kubernetes ConfigMap | `finops-scaler-state` + `finops-savings-state` — survive pod restarts |
 | **Observability** | Prometheus metrics | Counters & gauges: scale events, nodes cordoned, replicas saved, errors |
@@ -449,6 +570,7 @@ DynaPredictingDownScaler/
 │   │   ├── app.py             # FastAPI · GET/PATCH /api/config + 4 data routes
 │   │   ├── config_store.py    # Hot-patchable DashboardConfig singleton
 │   │   ├── demo_stub.py       # DemoK8sReader + synthetic Prometheus responses
+│   │   ├── prewarm.py         # PrewarmController — warm cache + Knative ping (optional)
 │   │   ├── k8s_client.py      # Read state + savings ConfigMaps · list nodes
 │   │   ├── savings_tracker.py # Async cordon-transition cost accumulator
 │   │   └── pricing.py         # AWS / GCP / manual pricing with 1-hour cache

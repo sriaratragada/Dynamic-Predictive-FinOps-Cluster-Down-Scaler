@@ -58,6 +58,7 @@ See **[SETUP.md](SETUP.md)** for all setup paths including full cluster deployme
 - **💰 Real-time cost tracking** — prices each cordon/uncordon cycle against live AWS/GCP rates; accumulates totals (all-time / this week / this month)
 - **💾 Restart-safe** — all state persisted in a Kubernetes ConfigMap; survives controller pod restarts
 - **🧪 Demo mode** — full synthetic cluster simulation; no Kubernetes or Prometheus needed
+- **⚡ Smart Pre-Warm Engine** *(optional, high-conversion pages only)* — watches for early user-intent signals (login, hover, input focus) and proactively boots Knative AI containers before the user submits a prompt; eliminates cold-start latency on the pages where it costs the most
 
 ---
 
@@ -70,7 +71,7 @@ No YAML or environment variable editing required. Click **⚙ Settings** in the 
 | **Connection** | Toggle demo mode · Prometheus URL |
 | **Cloud & Pricing** | Provider (Manual / AWS / GCP) · instance type · region · hourly rate |
 | **Schedule** | Business hours · active days · timezone · pre-warm minutes |
-| **Prediction** | Metric override · Prophet ML on/off · training window · idle threshold |
+| **Prediction** | Metric override · Prophet ML on/off · training window · idle threshold · AI Pre-Warm Engine |
 | **Dashboard** | Poll interval · node utilisation threshold · namespace filter |
 
 Changes apply immediately — no restart needed. For Docker and Helm deployments, environment variables and `.env` file options are documented in [SETUP.md](SETUP.md).
@@ -121,6 +122,7 @@ DynaPredictingDownScaler/
 │   │   ├── app.py             # FastAPI — 6 routes + React SPA serving
 │   │   ├── config_store.py    # Hot-patchable DashboardConfig (GET/PATCH /api/config)
 │   │   ├── demo_stub.py       # DemoK8sReader + synthetic Prometheus responses
+│   │   ├── prewarm.py         # PrewarmController — warm cache + async Knative ping
 │   │   ├── k8s_client.py      # Read state + savings ConfigMaps · list nodes
 │   │   ├── savings_tracker.py # Async cordon-transition cost accumulator
 │   │   └── pricing.py         # AWS / GCP / manual pricing with 1-hour cache

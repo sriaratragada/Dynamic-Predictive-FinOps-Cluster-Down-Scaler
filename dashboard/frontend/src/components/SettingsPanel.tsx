@@ -257,6 +257,20 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
 
             <div className="settings-toggle-row">
               <div className="settings-toggle-info">
+                <div className="settings-toggle-title">AI Pre-Warm Engine</div>
+                <div className="settings-toggle-desc">
+                  Boot Knative AI containers on user-intent signals — eliminates cold-start delay.
+                  Enable only on high-conversion AI feature pages.
+                </div>
+              </div>
+              <Toggle
+                checked={draft.enable_prewarm}
+                onChange={v => set('enable_prewarm', v)}
+              />
+            </div>
+
+            <div className="settings-toggle-row">
+              <div className="settings-toggle-info">
                 <div className="settings-toggle-title">Metric Override</div>
                 <div className="settings-toggle-desc">Quiet-day detection via Prometheus baseline</div>
               </div>
