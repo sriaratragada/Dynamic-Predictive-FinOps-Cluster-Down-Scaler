@@ -21,6 +21,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_DEMO_MODE = os.environ.get("DEMO_MODE", "false").lower() == "true"
+
 app = FastAPI(title="FinOps Dashboard API", docs_url="/api/docs", redoc_url=None)
 
 app.add_middleware(
@@ -38,6 +40,12 @@ _tracker: Optional[SavingsTracker] = None
 @app.on_event("startup")
 async def _startup():
     global _k8s, _tracker
+
+    if _DEMO_MODE:
+        from .demo_stub import DemoK8sReader  # noqa: PLC0415
+        _k8s = DemoK8sReader()
+        logger.info("DEMO MODE active — using synthetic data (no K8s or Prometheus needed)")
+        return
 
     try:
         _k8s = K8sReader()
@@ -60,6 +68,9 @@ async def _startup():
 # ------------------------------------------------------------------
 
 async def _prom_instant(query: str) -> list:
+    if _DEMO_MODE:
+        from .demo_stub import demo_prom_instant  # noqa: PLC0415
+        return demo_prom_instant(query)
     async with httpx.AsyncClient(timeout=10) as c:
         r = await c.get(f"{_PROMETHEUS}/api/v1/query", params={"query": query})
         r.raise_for_status()
@@ -73,6 +84,9 @@ async def _prom_range(query: str, hours: int) -> list:
     end = int(datetime.now(tz=timezone.utc).timestamp())
     start = end - hours * 3600
     step = max(300, (hours * 3600) // 200)
+    if _DEMO_MODE:
+        from .demo_stub import demo_prom_range  # noqa: PLC0415
+        return demo_prom_range(query, start, end, step)
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(
             f"{_PROMETHEUS}/api/v1/query_range",
@@ -204,6 +218,36 @@ async def api_history(hours: int = 24):
 
 @app.get("/api/savings")
 async def api_savings():
+    if _DEMO_MODE:
+        from .demo_stub import _historical_events, _SEED_TOTAL_SAVED  # noqa: PLC0415
+        now = datetime.now(tz=timezone.utc)
+        events = _historical_events()
+        week_ago = now.timestamp() - 7 * 86400
+        month_ago = now.timestamp() - 30 * 86400
+        week_usd = sum(
+            e["saved_usd"] for e in events
+            if e.get("end") and datetime.fromisoformat(e["end"]).timestamp() >= week_ago
+        )
+        month_usd = sum(
+            e["saved_usd"] for e in events
+            if e.get("end") and datetime.fromisoformat(e["end"]).timestamp() >= month_ago
+        )
+        # Running cost for currently cordoned nodes
+        from .demo_stub import _is_active, _DEMO_NODES  # noqa: PLC0415
+        cordoned = 0 if _is_active(now) else 2
+        running_cost = cordoned * 0.192 * 0.5  # ~30 min into current cordon
+        return {
+            "total_saved_usd": round(_SEED_TOTAL_SAVED + month_usd, 2),
+            "this_week_usd": round(week_usd, 2),
+            "this_month_usd": round(month_usd, 2),
+            "hourly_rate_per_node": 0.192,
+            "currently_cordoned_count": cordoned,
+            "active_cordon_running_cost": round(running_cost, 4),
+            "cloud_provider": "demo",
+            "instance_type": "m5.xlarge",
+            "region": "demo-region",
+        }
+
     info = pricing.get_provider_info()
     rate = pricing.get_hourly_rate()
 

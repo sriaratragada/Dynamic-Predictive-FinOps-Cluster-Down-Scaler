@@ -21,3 +21,8 @@ data:
   ENABLE_METRIC_OVERRIDE: {{ .Values.config.enableMetricOverride | quote }}
   DRY_RUN: {{ .Values.config.dryRun | quote }}
   METRICS_PORT: {{ .Values.config.metricsPort | quote }}
+  ENABLE_PROPHET: {{ .Values.config.enableProphet | quote }}
+  PROPHET_TRAINING_WEEKS: {{ .Values.config.prophetTrainingWeeks | quote }}
+  PROPHET_IDLE_THRESHOLD_CORES: {{ .Values.config.prophetIdleThresholdCores | quote }}
+  PROPHET_RETRAIN_HOURS: {{ .Values.config.prophetRetrainHours | quote }}
+  DEMO_MODE: {{ .Values.config.demoMode | quote }}

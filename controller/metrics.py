@@ -46,3 +46,17 @@ class PrometheusClient:
             '  sum(rate(container_cpu_usage_seconds_total{container!=""}[5m]))'
             '[7d:5m])'
         )
+
+    def query_range(self, promql: str, start: float, end: float, step: int = 300) -> list:
+        """Range query returning [[timestamp, value_str], ...] for use with Prophet."""
+        resp = requests.get(
+            f"{self._base}/api/v1/query_range",
+            params={"query": promql, "start": start, "end": end, "step": step},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data["status"] != "success":
+            raise RuntimeError(f"Prometheus range query failed: {data.get('error')}")
+        results = data["data"]["result"]
+        return results[0]["values"] if results else []

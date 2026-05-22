@@ -45,3 +45,21 @@ data:
 
   # Port the controller exposes its own Prometheus /metrics endpoint on
   METRICS_PORT: "8080"
+
+  # ── Prophet ML predictor (optional) ────────────────────────────────
+  # Requires: pip install -r requirements-prophet.txt
+  # Set to "true" to replace schedule-based decisions with a Prophet forecast
+  ENABLE_PROPHET: "false"
+
+  # How many weeks of Prometheus history to use for training
+  PROPHET_TRAINING_WEEKS: "4"
+
+  # Predicted CPU cores below this value is treated as idle
+  PROPHET_IDLE_THRESHOLD_CORES: "0.5"
+
+  # Re-train the model every N hours
+  PROPHET_RETRAIN_HOURS: "6"
+
+  # ── Demo / local mode ───────────────────────────────────────────────
+  # Set to "true" to run with synthetic data (no K8s cluster or Prometheus needed)
+  DEMO_MODE: "false"

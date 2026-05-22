@@ -24,6 +24,11 @@ class Config:
     enable_metric_override: bool
     dry_run: bool
     metrics_port: int
+    # Prophet ML predictor (optional — requires: pip install -r requirements-prophet.txt)
+    enable_prophet: bool
+    prophet_training_weeks: int
+    prophet_idle_threshold_cores: float
+    prophet_retrain_hours: int
 
 
 def load_config() -> Config:
@@ -43,4 +48,8 @@ def load_config() -> Config:
         enable_metric_override=os.environ.get("ENABLE_METRIC_OVERRIDE", "false").lower() == "true",
         dry_run=os.environ.get("DRY_RUN", "false").lower() == "true",
         metrics_port=int(os.environ.get("METRICS_PORT", "8080")),
+        enable_prophet=os.environ.get("ENABLE_PROPHET", "false").lower() == "true",
+        prophet_training_weeks=int(os.environ.get("PROPHET_TRAINING_WEEKS", "4")),
+        prophet_idle_threshold_cores=float(os.environ.get("PROPHET_IDLE_THRESHOLD_CORES", "0.5")),
+        prophet_retrain_hours=int(os.environ.get("PROPHET_RETRAIN_HOURS", "6")),
     )

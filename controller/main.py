@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from datetime import datetime
 
@@ -20,6 +21,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_DEMO_MODE = os.environ.get("DEMO_MODE", "false").lower() == "true"
+
 
 def _load_k8s():
     try:
@@ -32,20 +35,32 @@ def _load_k8s():
 
 def run():
     cfg = load_config()
-    _load_k8s()
+
+    if _DEMO_MODE:
+        logger.warning(
+            "*** DEMO MODE — synthetic data only, no Kubernetes cluster or Prometheus required ***"
+        )
+        from .demo_stub import (  # noqa: PLC0415
+            DemoAppsV1Api, DemoCoreV1Api, DemoPrometheusClient, DemoStateStore,
+        )
+        core_api = DemoCoreV1Api()
+        apps_api = DemoAppsV1Api()
+        prometheus = DemoPrometheusClient()
+        state_store = DemoStateStore()
+    else:
+        _load_k8s()
+        core_api = client.CoreV1Api()
+        apps_api = client.AppsV1Api()
+        prometheus = PrometheusClient(cfg.prometheus_url)
+        state_store = StateStore(
+            cfg.state_configmap_name, cfg.state_configmap_ns, core_api, dry_run=cfg.dry_run
+        )
 
     if cfg.dry_run:
         logger.warning("*** DRY-RUN MODE ENABLED — no Kubernetes resources will be modified ***")
 
     telemetry.start_metrics_server(cfg.metrics_port)
 
-    core_api = client.CoreV1Api()
-    apps_api = client.AppsV1Api()
-
-    prometheus = PrometheusClient(cfg.prometheus_url)
-    state_store = StateStore(
-        cfg.state_configmap_name, cfg.state_configmap_ns, core_api, dry_run=cfg.dry_run
-    )
     predictor = ActivityPredictor(cfg, prometheus)
     scaler = DeploymentScaler(
         apps_api, cfg.namespace_filter, cfg.min_replica_floor, dry_run=cfg.dry_run
@@ -54,10 +69,12 @@ def run():
 
     already_scaled_down = bool(state_store.load_replicas())
     logger.info(
-        "Controller started (loop interval %ds, timezone %s, dry_run=%s, recovered scaled_down=%s)",
+        "Controller started (loop=%ds, tz=%s, dry_run=%s, demo=%s, prophet=%s, recovered=%s)",
         cfg.loop_interval_seconds,
         cfg.timezone,
         cfg.dry_run,
+        _DEMO_MODE,
+        cfg.enable_prophet,
         already_scaled_down,
     )
 

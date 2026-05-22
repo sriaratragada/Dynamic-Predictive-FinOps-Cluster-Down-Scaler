@@ -48,6 +48,15 @@ config:
   # Port the controller exposes its own /metrics endpoint on
   metricsPort: "8080"
 
+  # Prophet ML predictor (optional — requires requirements-prophet.txt)
+  enableProphet: "false"
+  prophetTrainingWeeks: "4"
+  prophetIdleThresholdCores: "0.5"
+  prophetRetrainHours: "6"
+
+  # Demo / local mode — synthetic data, no cluster required
+  demoMode: "false"
+
 resources:
   requests:
     cpu: "50m"
