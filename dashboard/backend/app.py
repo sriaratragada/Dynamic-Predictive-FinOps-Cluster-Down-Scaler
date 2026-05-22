@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import pricing
+from . import config_store, pricing
 from .k8s_client import K8sReader
 from .savings_tracker import SavingsTracker
 
@@ -21,18 +21,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_DEMO_MODE = os.environ.get("DEMO_MODE", "false").lower() == "true"
+# Demo mode for K8s-reader initialisation is fixed at startup from env var.
+# Prometheus demo mode is dynamic — reads from config_store on every request.
+_STARTUP_DEMO = os.environ.get("DEMO_MODE", "false").lower() == "true"
 
 app = FastAPI(title="FinOps Dashboard API", docs_url="/api/docs", redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["GET"],
+    allow_methods=["GET", "PATCH"],
     allow_headers=["*"],
 )
 
-_PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 _k8s: Optional[K8sReader] = None
 _tracker: Optional[SavingsTracker] = None
 
@@ -41,7 +42,7 @@ _tracker: Optional[SavingsTracker] = None
 async def _startup():
     global _k8s, _tracker
 
-    if _DEMO_MODE:
+    if _STARTUP_DEMO:
         from .demo_stub import DemoK8sReader  # noqa: PLC0415
         _k8s = DemoK8sReader()
         logger.info("DEMO MODE active — using synthetic data (no K8s or Prometheus needed)")
@@ -64,15 +65,16 @@ async def _startup():
 
 
 # ------------------------------------------------------------------
-# Prometheus helpers
+# Prometheus helpers  (read prometheus_url + demo_mode from config_store)
 # ------------------------------------------------------------------
 
 async def _prom_instant(query: str) -> list:
-    if _DEMO_MODE:
+    cfg = config_store.get()
+    if cfg.demo_mode:
         from .demo_stub import demo_prom_instant  # noqa: PLC0415
         return demo_prom_instant(query)
     async with httpx.AsyncClient(timeout=10) as c:
-        r = await c.get(f"{_PROMETHEUS}/api/v1/query", params={"query": query})
+        r = await c.get(f"{cfg.prometheus_url}/api/v1/query", params={"query": query})
         r.raise_for_status()
         data = r.json()
         if data["status"] != "success":
@@ -81,15 +83,16 @@ async def _prom_instant(query: str) -> list:
 
 
 async def _prom_range(query: str, hours: int) -> list:
+    cfg = config_store.get()
     end = int(datetime.now(tz=timezone.utc).timestamp())
     start = end - hours * 3600
     step = max(300, (hours * 3600) // 200)
-    if _DEMO_MODE:
+    if cfg.demo_mode:
         from .demo_stub import demo_prom_range  # noqa: PLC0415
         return demo_prom_range(query, start, end, step)
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(
-            f"{_PROMETHEUS}/api/v1/query_range",
+            f"{cfg.prometheus_url}/api/v1/query_range",
             params={"query": query, "start": start, "end": end, "step": step},
         )
         r.raise_for_status()
@@ -97,6 +100,23 @@ async def _prom_range(query: str, hours: int) -> list:
         if data["status"] != "success":
             raise ValueError(data.get("error", "Prometheus range error"))
         return data["data"]["result"]
+
+
+# ------------------------------------------------------------------
+# Configuration routes
+# ------------------------------------------------------------------
+
+@app.get("/api/config")
+async def get_config():
+    return config_store.as_dict()
+
+
+@app.patch("/api/config")
+async def patch_config(request: Request):
+    updates = await request.json()
+    updated = config_store.patch(updates)
+    logger.info("Config updated: %s", list(updates.keys()))
+    return config_store.as_dict()
 
 
 # ------------------------------------------------------------------
@@ -218,7 +238,9 @@ async def api_history(hours: int = 24):
 
 @app.get("/api/savings")
 async def api_savings():
-    if _DEMO_MODE:
+    cfg = config_store.get()
+
+    if cfg.demo_mode:
         from .demo_stub import _historical_events, _SEED_TOTAL_SAVED  # noqa: PLC0415
         now = datetime.now(tz=timezone.utc)
         events = _historical_events()
@@ -232,20 +254,19 @@ async def api_savings():
             e["saved_usd"] for e in events
             if e.get("end") and datetime.fromisoformat(e["end"]).timestamp() >= month_ago
         )
-        # Running cost for currently cordoned nodes
-        from .demo_stub import _is_active, _DEMO_NODES  # noqa: PLC0415
+        from .demo_stub import _is_active  # noqa: PLC0415
         cordoned = 0 if _is_active(now) else 2
-        running_cost = cordoned * 0.192 * 0.5  # ~30 min into current cordon
+        running_cost = cordoned * cfg.node_hourly_cost * 0.5
         return {
             "total_saved_usd": round(_SEED_TOTAL_SAVED + month_usd, 2),
             "this_week_usd": round(week_usd, 2),
             "this_month_usd": round(month_usd, 2),
-            "hourly_rate_per_node": 0.192,
+            "hourly_rate_per_node": cfg.node_hourly_cost,
             "currently_cordoned_count": cordoned,
             "active_cordon_running_cost": round(running_cost, 4),
-            "cloud_provider": "demo",
-            "instance_type": "m5.xlarge",
-            "region": "demo-region",
+            "cloud_provider": cfg.cloud_provider,
+            "instance_type": cfg.instance_type or "m5.xlarge",
+            "region": cfg.aws_region or "demo",
         }
 
     info = pricing.get_provider_info()

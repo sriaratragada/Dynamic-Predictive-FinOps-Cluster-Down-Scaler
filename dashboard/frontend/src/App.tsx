@@ -1,21 +1,31 @@
 import { useEffect, useState, useCallback } from 'react'
-import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings } from './api'
-import type { StatusData, CapacityData, HistoryData, SavingsData } from './api'
+import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig } from './api'
+import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData } from './api'
 import StatusPanel from './components/StatusPanel'
 import DollarsSavedPanel from './components/DollarsSavedPanel'
 import DemandCapacityChart from './components/DemandCapacityChart'
 import NodeTable from './components/NodeTable'
+import SettingsPanel from './components/SettingsPanel'
 
-const POLL_INTERVAL = 30_000
+const DEFAULT_POLL_MS = 30_000
 
 export default function App() {
-  const [status, setStatus]     = useState<StatusData | null>(null)
+  const [status,   setStatus]   = useState<StatusData | null>(null)
   const [capacity, setCapacity] = useState<CapacityData | null>(null)
-  const [history, setHistory]   = useState<HistoryData | null>(null)
-  const [savings, setSavings]   = useState<SavingsData | null>(null)
-  const [error, setError]       = useState<string | null>(null)
+  const [history,  setHistory]  = useState<HistoryData | null>(null)
+  const [savings,  setSavings]  = useState<SavingsData | null>(null)
+  const [config,   setConfig]   = useState<ConfigData | null>(null)
+  const [error,    setError]    = useState<string | null>(null)
   const [historyHours, setHistoryHours] = useState(24)
-  const [lastUpdated, setLastUpdated]   = useState<Date | null>(null)
+  const [lastUpdated,  setLastUpdated]  = useState<Date | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  const pollInterval = config ? config.poll_interval_seconds * 1000 : DEFAULT_POLL_MS
+
+  // Load config once on mount
+  useEffect(() => {
+    fetchConfig().then(setConfig).catch(() => {/* use defaults */})
+  }, [])
 
   const refresh = useCallback(async (hours = historyHours) => {
     try {
@@ -38,19 +48,23 @@ export default function App() {
 
   useEffect(() => {
     refresh()
-    const id = setInterval(() => refresh(), POLL_INTERVAL)
+    const id = setInterval(() => refresh(), pollInterval)
     return () => clearInterval(id)
-  }, [refresh])
+  }, [refresh, pollInterval])
 
   const handleHoursChange = (h: number) => {
     setHistoryHours(h)
     refresh(h)
   }
 
+  const handleConfigSaved = (cfg: ConfigData) => {
+    setConfig(cfg)
+    // Re-fetch data immediately so savings / provider info reflects the change
+    refresh()
+  }
+
   const mode = status
-    ? status.scaled_down
-      ? 'idle'
-      : 'active'
+    ? status.scaled_down ? 'idle' : 'active'
     : 'active'
 
   return (
@@ -63,6 +77,13 @@ export default function App() {
           )}
           <div className="live-dot" />
           <span>Live</span>
+          <button
+            className="settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Open settings"
+          >
+            ⚙ Settings
+          </button>
         </div>
       </header>
 
@@ -86,6 +107,14 @@ export default function App() {
           <NodeTable capacity={capacity} savings={savings} />
         </div>
       </div>
+
+      {settingsOpen && config && (
+        <SettingsPanel
+          config={config}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={handleConfigSaved}
+        />
+      )}
     </div>
   )
 }
