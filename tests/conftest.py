@@ -26,6 +26,10 @@ def cfg():
         enable_metric_override=False,
         dry_run=False,
         metrics_port=8080,
+        enable_prophet=False,
+        prophet_training_weeks=4,
+        prophet_idle_threshold_cores=0.5,
+        prophet_retrain_hours=6,
     )
 
 
