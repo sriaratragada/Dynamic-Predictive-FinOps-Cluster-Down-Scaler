@@ -1,162 +1,103 @@
-# DynaPredictingDownScaler
+# Dynamic Predictive FinOps Cluster Down-Scaler
 
-A Kubernetes controller that watches Prometheus for cluster activity, predicts upcoming idle windows, and proactively scales down non-essential workloads and cordons underutilised nodes — reversing everything ahead of the next business-hours window.
+> **Automatically hibernate your Kubernetes cluster during off-hours — then wake it back up before your team arrives.**
 
-## How it works
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat&logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=black)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-operator-326CE5?style=flat&logo=kubernetes&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=flat&logo=fastapi&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-metrics-E6522C?style=flat&logo=prometheus&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-pricing-FF9900?style=flat&logo=amazon-aws&logoColor=white)
+![GCP](https://img.shields.io/badge/GCP-pricing-4285F4?style=flat&logo=google-cloud&logoColor=white)
+![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat&logo=github-actions&logoColor=white)
 
-```
-Every 60 s (configurable):
-  1. Check whether "now" is inside the configured business-hours schedule
-  2. If entering an idle window:
-       • Scale all opt-in Deployments to MIN_REPLICA_FLOOR
-       • Cordon + drain nodes whose CPU is below NODE_UTILISATION_THRESHOLD
-  3. PREWARM_MINUTES before the active window restarts:
-       • Uncordon previously cordoned nodes
-       • Restore all Deployments to their saved replica counts
-```
-
-State (original replica counts, list of cordoned nodes) is stored in a ConfigMap so the controller survives pod restarts without losing track.
-
----
-
-## Prerequisites
-
-- Kubernetes cluster (any distribution)
-- Prometheus reachable from inside the cluster (standard `kube-prometheus-stack` endpoint assumed)
-- `kubectl` access with cluster-admin to apply RBAC
+| | | |
+|:---:|:---:|:---:|
+| **Save up to 70% overnight** | **Zero-downtime scale-up** | **Configure from the browser** |
+| Idle nodes cordoned + workloads scaled to zero during off-hours | Pre-warm fires 15 min before business hours — cluster ready on time | Live settings panel — no YAML or env vars needed |
 
 ---
 
 ## Quick start
 
-### 1. Build and push the image
+**No Kubernetes, no Prometheus, no cloud account required — just Docker:**
 
 ```bash
-docker build -t finops-scaler:latest .
-# Push to your registry if running in a real cluster:
-# docker tag finops-scaler:latest <registry>/finops-scaler:latest
-# docker push <registry>/finops-scaler:latest
+git clone <repo-url>
+cd DynaPredictingDownScaler
+docker compose up        # or:  make demo
 ```
 
-### 2. Edit the ConfigMap
+Open **http://localhost:8090** — a fully live dashboard backed by synthetic cluster data, with 30 days of pre-seeded savings history and scale-down/up events on the chart.
 
-Open [`manifests/configmap.yaml`](manifests/configmap.yaml) and set at minimum:
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `PROMETHEUS_URL` | `http://prometheus-operated.monitoring…:9090` | Prometheus endpoint |
-| `BUSINESS_HOURS_START` | `07:00` | Start of active window (24-h HH:MM) |
-| `BUSINESS_HOURS_END` | `19:00` | End of active window |
-| `BUSINESS_DAYS` | `0,1,2,3,4` | Active weekdays (0=Mon … 6=Sun) |
-| `TIMEZONE` | `UTC` | IANA timezone name |
-| `PREWARM_MINUTES` | `15` | Minutes before BH start to begin scale-up |
-| `MIN_REPLICA_FLOOR` | `0` | Minimum replicas during off-hours |
-| `NODE_UTILISATION_THRESHOLD` | `0.10` | Cordon nodes below this CPU fraction |
-
-### 3. Apply manifests
+**macOS / Linux — hot-reload dev (backend + frontend in one command):**
 
 ```bash
-kubectl apply -f manifests/rbac.yaml
-kubectl apply -f manifests/configmap.yaml
-kubectl apply -f manifests/deployment.yaml
+make dev
+# backend → http://localhost:8090   (FastAPI, auto-reloads on save)
+# frontend → http://localhost:5173  (Vite, HMR)
 ```
 
-### 4. Opt in your Deployments
+**Windows:**
 
-Add this label to any Deployment you want the scaler to manage:
-
-```yaml
-metadata:
-  labels:
-    finops.io/scaledown-eligible: "true"
+```powershell
+make dev-win   # opens backend and frontend in separate PowerShell windows
 ```
 
-Or patch an existing Deployment:
-
-```bash
-kubectl label deployment <name> -n <namespace> finops.io/scaledown-eligible=true
-```
+See **[SETUP.md](SETUP.md)** for all setup paths including full cluster deployment and Prophet ML mode.
 
 ---
 
-## Configuration reference
+## What it does
 
-All settings are environment variables injected from `finops-scaler-config` ConfigMap.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PROMETHEUS_URL` | `http://prometheus:9090` | Prometheus base URL |
-| `BUSINESS_HOURS_START` | `07:00` | Active window start |
-| `BUSINESS_HOURS_END` | `19:00` | Active window end |
-| `BUSINESS_DAYS` | `0,1,2,3,4` | Comma-separated weekday numbers |
-| `PREWARM_MINUTES` | `15` | Pre-warm lead time in minutes |
-| `LOOP_INTERVAL_SECONDS` | `60` | Control-loop tick interval |
-| `NAMESPACE_FILTER` | _(all)_ | Restrict scaledown to one namespace |
-| `MIN_REPLICA_FLOOR` | `0` | Minimum replicas during idle windows |
-| `NODE_UTILISATION_THRESHOLD` | `0.10` | CPU fraction below which nodes are cordoned |
-| `STATE_CONFIGMAP_NAME` | `finops-scaler-state` | ConfigMap used as state store |
-| `STATE_CONFIGMAP_NS` | `kube-system` | Namespace of the state ConfigMap |
-| `TIMEZONE` | `UTC` | Schedule timezone (IANA name) |
-| `ENABLE_METRIC_OVERRIDE` | `false` | Allow Prometheus data to override schedule |
-
-### Metric override (optional)
-
-When `ENABLE_METRIC_OVERRIDE=true`, the controller also checks the 7-day rolling average of cluster CPU. If live usage drops below 10 % of the baseline *during* business hours, it treats the period as idle and scales down anyway — useful for holiday closures or unexpected quiet days.
+- **⏰ Schedule-based hibernation** — evaluates a timezone-aware business-hours window (Mon–Fri 07:00–19:00 by default) every 60 seconds
+- **🔮 Prophet ML forecasting** *(optional)* — trains a Facebook Prophet time-series model on your Prometheus history; predicts idle windows from actual usage patterns instead of a fixed clock
+- **📊 Quiet-day detection** *(optional)* — if live CPU drops below 10 % of a 7-day rolling baseline during business hours, treats it as idle (handles bank holidays automatically)
+- **🔒 Safe scale-down** — only targets Deployments labelled `finops.io/scaledown-eligible=true`; PDB-safe eviction with 5-minute drain timeout
+- **🌅 Pre-warm** — uncordons nodes and restores replica counts `PREWARM_MINUTES` (default 15) before the active window opens
+- **💰 Real-time cost tracking** — prices each cordon/uncordon cycle against live AWS/GCP rates; accumulates totals (all-time / this week / this month)
+- **💾 Restart-safe** — all state persisted in a Kubernetes ConfigMap; survives controller pod restarts
+- **🧪 Demo mode** — full synthetic cluster simulation; no Kubernetes or Prometheus needed
 
 ---
 
-## Verification
+## Configuring
 
-### Smoke-test off-hours scaling
+No YAML or environment variable editing required. Click **⚙ Settings** in the dashboard header to configure everything from the browser:
 
-Temporarily shrink the active window to a one-minute range that has already passed:
+| Section | What you set |
+|:--------|:-------------|
+| **Connection** | Toggle demo mode · Prometheus URL |
+| **Cloud & Pricing** | Provider (Manual / AWS / GCP) · instance type · region · hourly rate |
+| **Schedule** | Business hours · active days · timezone · pre-warm minutes |
+| **Prediction** | Metric override · Prophet ML on/off · training window · idle threshold |
+| **Dashboard** | Poll interval · node utilisation threshold · namespace filter |
 
-```bash
-kubectl set env deployment/finops-scaler -n kube-system \
-  BUSINESS_HOURS_START=00:00 BUSINESS_HOURS_END=00:01
-```
+Changes apply immediately — no restart needed. For Docker and Helm deployments, environment variables and `.env` file options are documented in [SETUP.md](SETUP.md).
 
-Watch logs — eligible Deployments should scale to 0 within 60 s:
+---
 
-```bash
-kubectl logs -f deployment/finops-scaler -n kube-system
-```
+## Deployment paths
 
-Restore:
+| | No cluster | Real cluster | Real cluster + ML |
+|:--|:--:|:--:|:--:|
+| **Docker** (`docker compose up`) | ✅ demo data | ✅ with `.env` | ✅ |
+| **Helm** (`helm install`) | — | ✅ recommended | ✅ |
+| **Raw manifests** (`kubectl apply`) | — | ✅ | ✅ |
 
-```bash
-kubectl set env deployment/finops-scaler -n kube-system \
-  BUSINESS_HOURS_START=07:00 BUSINESS_HOURS_END=19:00
-```
+See [SETUP.md](SETUP.md) for step-by-step instructions for every path.
 
-### Pre-warm timing
+---
 
-```bash
-kubectl set env deployment/finops-scaler -n kube-system PREWARM_MINUTES=2
-```
+## Architecture
 
-Check logs confirm scale-up fires 2 minutes before the active window reopens.
-
-### State persistence across restarts
-
-```bash
-kubectl delete pod -n kube-system -l app=finops-scaler
-kubectl get configmap finops-scaler-state -n kube-system -o yaml
-```
-
-The saved replica counts survive the restart and are used to restore Deployments correctly.
-
-### Node cordon verification
-
-```bash
-kubectl get nodes
-# SchedulingDisabled nodes appear during the idle window
-# Ready nodes return after uncordon at pre-warm time
-```
-
-### PodDisruptionBudget safety
-
-Create a PDB with `minAvailable: 1` on a single-replica Deployment. The controller will log a warning (`PDB prevented eviction`) and skip that pod rather than crashing.
+See **[OVERVIEW.md](OVERVIEW.md)** for:
+- System architecture diagram (controller · dashboard · Prometheus · cloud APIs)
+- Decision algorithm flowchart (schedule → metric override → Prophet → scale action)
+- Scale-down and pre-warm sequence diagrams
+- Dashboard UI wireframe
+- Full tech stack breakdown
+- Prometheus metrics exposed
 
 ---
 
@@ -165,19 +106,65 @@ Create a PDB with `minAvailable: 1` on a single-replica Deployment. The controll
 ```
 DynaPredictingDownScaler/
 ├── controller/
-│   ├── __init__.py
-│   ├── main.py          # control loop entry-point
-│   ├── config.py        # env-var configuration
-│   ├── metrics.py       # Prometheus HTTP API client
-│   ├── predictor.py     # schedule-based activity predictor
-│   ├── scaler.py        # Deployment replica management
-│   ├── node_manager.py  # cordon / drain / uncordon
-│   └── state_store.py   # replica-count persistence in a ConfigMap
-├── manifests/
-│   ├── rbac.yaml        # ServiceAccount + ClusterRole + binding
-│   ├── configmap.yaml   # tuning knobs
-│   └── deployment.yaml  # controller Deployment
-├── Dockerfile
-├── requirements.txt
-└── README.md
+│   ├── main.py              # Control loop — _tick() every 60 s
+│   ├── predictor.py         # Schedule + metric-override + Prophet gate
+│   ├── prophet_predictor.py # ProphetPredictor — train, forecast, cache
+│   ├── scaler.py            # Deployment replica management
+│   ├── node_manager.py      # Node cordon · drain · uncordon
+│   ├── state_store.py       # ConfigMap persistence layer
+│   ├── metrics.py           # Prometheus HTTP client (query + query_range)
+│   ├── telemetry.py         # Self-expose finops_* metrics on :8080/metrics
+│   ├── config.py            # Env-var backed Config dataclass
+│   └── demo_stub.py         # Synthetic K8s + Prometheus stubs (DEMO_MODE)
+├── dashboard/
+│   ├── backend/
+│   │   ├── app.py             # FastAPI — 6 routes + React SPA serving
+│   │   ├── config_store.py    # Hot-patchable DashboardConfig (GET/PATCH /api/config)
+│   │   ├── demo_stub.py       # DemoK8sReader + synthetic Prometheus responses
+│   │   ├── k8s_client.py      # Read state + savings ConfigMaps · list nodes
+│   │   ├── savings_tracker.py # Async cordon-transition cost accumulator
+│   │   └── pricing.py         # AWS / GCP / manual pricing with 1-hour cache
+│   ├── frontend/src/
+│   │   ├── App.tsx                     # Polling · settings state · demo banner
+│   │   ├── api.ts                      # Typed fetch helpers + ConfigData interface
+│   │   └── components/
+│   │       ├── DemoBanner.tsx          # "Running in demo mode" — opens Settings
+│   │       ├── SettingsPanel.tsx       # Slide-in config drawer (5 sections)
+│   │       ├── Toggle.tsx              # Animated accessible toggle switch
+│   │       ├── StatusPanel.tsx         # Mode badge · node/deployment chips
+│   │       ├── DollarsSavedPanel.tsx   # Animated $ counter · provider badge
+│   │       ├── DemandCapacityChart.tsx # Recharts ComposedChart + event markers
+│   │       └── NodeTable.tsx           # Per-node CPU bars · savings column
+│   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
+├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
+├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)
+├── tests/                       # 44 pytest tests · freezegun · pytest-mock
+├── scripts/
+│   ├── dev.sh                   # One-command local dev (macOS/Linux)
+│   └── dev.ps1                  # One-command local dev (Windows)
+├── docker-compose.yml           # Demo mode default · 'full' profile adds controller
+├── Makefile                     # make demo · dev · build · test · stop · logs
+├── .env.example                 # Annotated env var template
+├── requirements.txt             # Controller dependencies
+├── requirements-prophet.txt     # Optional: prophet + pandas
+├── requirements-dev.txt         # Test dependencies
+├── OVERVIEW.md                  # Architecture, diagrams, tech stack
+└── SETUP.md                     # Full installation guide
+```
+
+---
+
+## Verify it's working
+
+```bash
+curl http://localhost:8090/health       # {"status":"ok"}
+curl http://localhost:8090/api/status   # cluster state JSON
+curl http://localhost:8090/api/savings  # cost savings JSON
+curl http://localhost:8090/api/config   # live configuration
+```
+
+Label workloads for scale-down eligibility (full cluster mode):
+
+```bash
+kubectl label deployment my-api finops.io/scaledown-eligible=true
 ```

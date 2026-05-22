@@ -1,6 +1,6 @@
 # Setup & Installation Guide
 
-> Three paths to running the FinOps Down-Scaler — pick the one that matches where you are today.
+> Pick the path that matches where you are — from "I just want to see it" to "deploy to production with ML forecasting."
 
 ---
 
@@ -8,132 +8,149 @@
 
 ```mermaid
 flowchart TD
-  START([Start here]) --> Q1{Do you have\na K8s cluster?}
+  START([Start here]) --> Q0{"Want to try it\nright now?"}
 
-  Q1 -- No --> DEMO["🖥 Demo Mode\n5-minute setup\nno cluster needed"]
-  Q1 -- Yes --> Q2{Do you want\nML-based forecasting?}
+  Q0 -- Yes --> DOCKER["🐳 Docker\n<b>one command</b>\nno installs needed"]
+  Q0 -- "Need hot-reload\ndev setup" --> DEV["💻 Local Dev\nmake dev / scripts/dev.sh\nbackend + frontend in one command"]
+  Q0 -- "Have a cluster\nto deploy to" --> Q1{ML forecasting?}
 
-  Q2 -- No --> FULL["🚀 Full Deployment\nschedule-based predictor\nHelm or raw manifests"]
-  Q2 -- Yes --> Q3{"Prometheus retaining\n≥ 4 weeks of metrics?"}
+  Q1 -- No --> FULL["🚀 Full Deployment\nHelm or raw manifests\nschedule-based predictor"]
+  Q1 -- Yes --> Q2{"Prometheus ≥\n4 weeks of metrics?"}
 
-  Q3 -- Yes --> PROPHET["🔮 Full + Prophet Mode\ntime-series forecast\nreplaces schedule logic"]
-  Q3 -- No --> FULL
+  Q2 -- Yes --> PROPHET["🔮 Full + Prophet Mode\ntime-series forecast\nlearned idle windows"]
+  Q2 -- No --> FULL
 
-  DEMO --> D_CMD["pip install -r requirements.txt\nDEMO_MODE=true uvicorn ...\nnpm run dev"]
-  FULL --> F_CMD["helm install finops-scaler ...\nkubectl apply -f manifests/"]
-  PROPHET --> P_CMD["pip install -r requirements-prophet.txt\nENABLE_PROPHET=true"]
+  DOCKER --> OPEN["open http://localhost:8090\nclick ⚙ Settings to configure"]
+  DEV --> OPEN2["backend :8090 · frontend :5173\nCtrl+C stops both"]
+  FULL --> HELM["helm install finops-scaler\nor kubectl apply -f manifests/"]
+  PROPHET --> P_EXTRA["pip install -r requirements-prophet.txt\nENABLE_PROPHET=true"]
 ```
 
 ---
 
 ## Prerequisites
 
-| Requirement | Demo Mode | Full Deployment | Prophet Mode |
-|:-----------|:---------:|:---------------:|:------------:|
-| Python 3.10+ | ✅ | ✅ | ✅ |
-| Node.js 18+ | ✅ | optional | optional |
-| Kubernetes cluster | ❌ not needed | ✅ | ✅ |
-| Prometheus | ❌ not needed | ✅ | ✅ + 4-week retention |
-| AWS/GCP account | ❌ not needed | optional | optional |
+| Requirement | Docker | Local Dev | Full Deploy | Prophet |
+|:-----------|:------:|:---------:|:-----------:|:-------:|
+| Docker Desktop | ✅ | ❌ | ❌ | ❌ |
+| Python 3.10+ | ❌ | ✅ | ✅ | ✅ |
+| Node.js 18+ | ❌ | ✅ | ❌ optional | ❌ optional |
+| Kubernetes cluster | ❌ | ❌ | ✅ | ✅ |
+| Prometheus | ❌ | ❌ | ✅ | ✅ + 4-week retention |
+| AWS/GCP account | ❌ | ❌ | optional | optional |
 
 ---
 
-## 1 — Demo Mode
+## 1 — Docker (fastest — one command)
 
-> Run the full dashboard with **synthetic data** — no Kubernetes, no Prometheus, no cloud account. Ideal for evaluating the UI and understanding the system before deploying.
+> Run the full dashboard with synthetic data. **No Python, no Node.js, no Kubernetes, no Prometheus needed.**
 
-### What demo mode simulates
+```bash
+git clone <repo-url>
+cd DynaPredictingDownScaler
+docker compose up          # or:  make demo
+```
 
-- A 3-node cluster (`demo-node-1`, `demo-node-2`, `demo-node-3`)
-- Realistic CPU usage: ~9.5 cores active during business hours (Mon–Fri 07:00–19:00), ~0.4 cores at night
-- 2 eligible deployments (`api-server ×3`, `worker ×5`) that scale to zero off-hours
-- ~30 days of pre-seeded savings history ($847.52 base)
-- Scale-down/up events visible on the chart at each daily business-hours crossing
+Open **http://localhost:8090**.
 
-### Step-by-step
+That's it. Docker builds a multi-stage image (Node 20-alpine compiles the React app; Python 3.12-slim runs FastAPI) and starts the dashboard in demo mode with pre-seeded synthetic cluster data.
 
 ```mermaid
 sequenceDiagram
   actor You
-  participant T1 as Terminal 1 · backend
-  participant T2 as Terminal 2 · frontend
+  participant D as Docker
   participant B as Browser
 
-  You->>T1: cd dashboard/backend
-  You->>T1: pip install -r requirements.txt
-  You->>T1: DEMO_MODE=true uvicorn app:app --reload --port 8090
-  T1-->>You: Uvicorn running on http://0.0.0.0:8090
-
-  You->>T2: cd dashboard/frontend
-  You->>T2: npm install
-  You->>T2: npm run dev
-  T2-->>You: VITE ready on http://localhost:5173
-
-  You->>B: open http://localhost:5173
-  B-->>You: Live dashboard with synthetic cluster data
+  You->>D: docker compose up
+  D-->>D: Stage 1 — npm ci && npm run build
+  D-->>D: Stage 2 — pip install && uvicorn
+  D-->>You: Dashboard ready on :8090
+  You->>B: open http://localhost:8090
+  B-->>You: Live dashboard · 30 days savings history · synthetic cluster
+  Note over B: Blue banner → click "Connect your cluster →"\nto open ⚙ Settings and wire in a real cluster
 ```
 
-#### Terminal 1 — backend
+### What demo mode shows
+
+- A 3-node cluster (`demo-node-1/2/3`) with realistic CPU patterns — ~9.5 cores active Mon–Fri 07:00–19:00, ~0.4 cores off-hours
+- 2 eligible deployments (`api-server ×3`, `worker ×5`) scaled to zero off-hours
+- 30 days of pre-seeded savings history ($847.52 base)
+- Scale-down ▼ and scale-up ▲ markers on the history chart at each business-hours crossing
+
+### Stop
 
 ```bash
-cd dashboard/backend
-pip install -r requirements.txt
-
-# macOS / Linux
-DEMO_MODE=true uvicorn app:app --reload --port 8090
-
-# Windows PowerShell
-$env:DEMO_MODE="true"; uvicorn app:app --reload --port 8090
+docker compose down        # or:  make stop
 ```
 
-#### Terminal 2 — frontend dev server
+### Verify the API
 
 ```bash
-cd dashboard/frontend
-npm install
-npm run dev
-# → open http://localhost:5173
-```
-
-> **Tip:** The frontend dev server proxies `/api/*` to `localhost:8090` automatically — no CORS or config needed.
-
-### Verify the API directly
-
-```bash
-curl http://localhost:8090/api/status
-curl http://localhost:8090/api/savings
+curl http://localhost:8090/health        # {"status":"ok"}
+curl http://localhost:8090/api/status    # cluster state JSON
+curl http://localhost:8090/api/savings   # cost savings JSON
 curl "http://localhost:8090/api/history?hours=24"
-curl http://localhost:8090/api/capacity
-```
-
-### Run the controller in demo mode (optional)
-
-The controller can also run locally — it will log scale-down/up decisions without touching any real cluster:
-
-```bash
-# From the project root
-pip install -r requirements.txt
-
-# macOS / Linux
-DEMO_MODE=true DRY_RUN=true python -m controller.main
-
-# Windows PowerShell
-$env:DEMO_MODE="true"; $env:DRY_RUN="true"; python -m controller.main
-```
-
-Expected output:
-```
-2026-05-22T19:00:00 INFO     controller.main  Controller started (loop=60s, demo=True, prophet=False, recovered=False)
-2026-05-22T19:00:00 INFO     controller.main  Entering low-activity window — scaling down eligible deployments
-2026-05-22T19:00:00 INFO     controller.demo_stub  [DEMO] Scaled default/api-server → 0 replicas
-2026-05-22T19:00:00 INFO     controller.demo_stub  [DEMO] Cordoned demo-node-2
 ```
 
 ---
 
-## 2 — Prophet Mode
+## 2 — Local Dev (hot-reload, one command)
 
-> Prophet trains a time-series model on your cluster's historical CPU usage and **learns your actual patterns** — handling bank holidays, quiet Fridays, and irregular demand without manual schedule tweaking.
+> Both backend and frontend start together, with live-reload. No Docker needed, but requires Python 3.10+ and Node 18+.
+
+**macOS / Linux:**
+
+```bash
+make dev
+# → installs pip + npm deps if missing
+# → backend  http://localhost:8090  (FastAPI, auto-reloads on .py save)
+# → frontend http://localhost:5173  (Vite HMR)
+# → Ctrl+C stops both cleanly
+```
+
+**Windows (PowerShell):**
+
+```powershell
+make dev-win
+# Opens backend and frontend each in their own PowerShell window.
+# Press Enter in the launch window to stop both.
+```
+
+**Without make:**
+
+```bash
+bash scripts/dev.sh          # macOS/Linux
+# or
+powershell -ExecutionPolicy Bypass -File scripts/dev.ps1   # Windows
+```
+
+The Vite dev server proxies all `/api/*` and `/health` requests to `localhost:8090` automatically — no CORS configuration needed.
+
+---
+
+## 3 — Configuring via the Settings UI
+
+> No env var editing, no YAML, no restarts. All runtime settings are available in the browser.
+
+Once the dashboard is open (whether via Docker or local dev), click **⚙ Settings** in the top-right of the header. A panel slides in from the right with five sections:
+
+| Section | What you configure |
+|:--------|:------------|
+| 🔌 **Connection** | Toggle demo mode on/off · Prometheus URL |
+| ☁️ **Cloud & Pricing** | Cloud provider (Manual / AWS / GCP) · instance type · region · hourly rate |
+| 🗓 **Schedule** | Business hours · active days (pill buttons) · timezone · pre-warm minutes |
+| 🔮 **Prediction** | Metric override · Prophet ML on/off · training weeks · idle threshold · retrain interval |
+| 📊 **Dashboard** | Poll interval · node utilisation threshold · namespace filter · min replica floor |
+
+Click **Save Changes** — the backend accepts the update, invalidates pricing caches if needed, and the dashboard refreshes data immediately.
+
+> **When to use env vars instead:** For Kubernetes/Helm deployments where configuration must be baked into the pod spec at deploy time, use environment variables or `values.yaml`. The Settings UI is for live tuning — both approaches can coexist.
+
+---
+
+## 4 — Prophet ML Mode
+
+> Prophet trains a time-series model on your cluster's Prometheus history and **learns your actual idle patterns** — handling bank holidays, quiet Fridays, and irregular demand automatically.
 
 ### How Prophet fits in
 
@@ -143,19 +160,21 @@ flowchart LR
   DF --> FIT["Prophet.fit\nweekly + daily seasonality\nchangepoint_prior_scale=0.05"]
   FIT --> FORECAST["48-hour forecast\nyhat per 5-minute slot\ncached for 6 hours"]
   FORECAST --> GATE{"yhat ≥\nthreshold?"}
-  GATE -- "No → IDLE" --> DOWN["Scale down\nCordon nodes"]
-  GATE -- "Yes → ACTIVE" --> UP["No action\n(or scale up if recovering)"]
+  GATE -- "No → IDLE" --> DOWN["Scale down · Cordon nodes"]
+  GATE -- "Yes → ACTIVE" --> UP["No action (or scale up)"]
 ```
 
-### Additional prerequisites
+### Install
 
 ```bash
 pip install -r requirements-prophet.txt
 # Installs: prophet>=1.1.5, pandas>=2.0.0
-# Note: Prophet depends on pystan or cmdstanpy — first install takes ~2-5 minutes
+# First install takes ~2–5 minutes (Stan compilation)
 ```
 
-### Configuration
+### Configure
+
+Either in the **⚙ Settings → Prediction** section of the UI, or via environment variables:
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
@@ -164,21 +183,18 @@ pip install -r requirements-prophet.txt
 | `PROPHET_IDLE_THRESHOLD_CORES` | `0.5` | yhat below this → cluster is idle |
 | `PROPHET_RETRAIN_HOURS` | `6` | Retrain model every N hours |
 
-### Run with Prophet
+### Run
 
 ```bash
 # macOS / Linux
-ENABLE_PROPHET=true \
-PROMETHEUS_URL=http://localhost:9090 \
-python -m controller.main
+ENABLE_PROPHET=true PROMETHEUS_URL=http://localhost:9090 python -m controller.main
 
 # Windows PowerShell
-$env:ENABLE_PROPHET="true"
-$env:PROMETHEUS_URL="http://localhost:9090"
+$env:ENABLE_PROPHET="true"; $env:PROMETHEUS_URL="http://localhost:9090"
 python -m controller.main
 ```
 
-### Expected log output
+### Expected logs
 
 ```
 INFO  Prophet model trained on 8064 data points covering 4 weeks; forecast cached for 6 hours
@@ -186,29 +202,29 @@ INFO  Prophet predicts cluster IDLE at 2026-05-22 19:05:00+00:00
 INFO  Entering low-activity window — scaling down eligible deployments
 ```
 
-### What to watch for
-
-- **"Prophet not installed"** → run `pip install -r requirements-prophet.txt`
-- **"only N data points"** → Prometheus doesn't have enough history yet; Prophet falls back to the schedule predictor automatically until ≥ 24 data points are available
-- **Threshold tuning** — if Prophet marks too many hours as idle, raise `PROPHET_IDLE_THRESHOLD_CORES` (e.g., `2.0`); if it never triggers, lower it
-
 ### Graceful fallback
 
-If Prophet training fails for any reason (network issue, insufficient data, import error), the controller automatically falls back to the schedule-based predictor without crashing. You'll see a `WARNING` log explaining why.
+If training fails for any reason (network issue, insufficient data, missing package), the controller **automatically falls back to the schedule predictor** without crashing. You'll see a `WARNING` in the logs explaining why.
+
+### Threshold tuning
+
+- Prophet marks too many hours as idle → raise `PROPHET_IDLE_THRESHOLD_CORES` (e.g. `2.0`)
+- Prophet never triggers → lower it (e.g. `0.3`)
+- "only N data points" → Prometheus doesn't have enough history yet; Prophet falls back automatically until ≥ 24 data points are available
 
 ---
 
-## 3 — Full Cluster Deployment
+## 5 — Full Cluster Deployment
 
 ### Prerequisites
 
 ```mermaid
 flowchart LR
   A["kubectl access\nto target cluster"] --> B["Prometheus installed\nin cluster"]
-  B --> C["Deployments labelled\nfinops.io/scaledown-eligible=true"]
-  C --> D["Choose: Helm or raw manifests"]
+  B --> C["Label Deployments\nfinops.io/scaledown-eligible=true"]
+  C --> D["Choose: Helm or manifests"]
   D --> E["Deploy controller + dashboard"]
-  E --> F["Open dashboard\nvia port-forward or Ingress"]
+  E --> F["Open dashboard\nport-forward or Ingress"]
 ```
 
 ### Label your workloads
@@ -216,8 +232,9 @@ flowchart LR
 Only Deployments with this label are eligible for scale-down:
 
 ```bash
-kubectl label deployment my-api      finops.io/scaledown-eligible=true
-kubectl label deployment my-worker   finops.io/scaledown-eligible=true
+kubectl label deployment my-api    finops.io/scaledown-eligible=true
+kubectl label deployment my-worker finops.io/scaledown-eligible=true
+
 # Verify:
 kubectl get deployments -A -l finops.io/scaledown-eligible=true
 ```
@@ -235,6 +252,10 @@ helm install finops-scaler ./helm/finops-scaler \
 helm upgrade finops-scaler ./helm/finops-scaler \
   --set config.enableProphet=true \
   --set config.prophetIdleThresholdCores=1.0
+
+# Optional: demo mode for testing the chart without a real cluster
+helm upgrade finops-scaler ./helm/finops-scaler \
+  --set config.demoMode=true
 ```
 
 ### Deploy via raw manifests
@@ -262,9 +283,10 @@ kubectl logs -f deployment/finops-scaler -n kube-system
 kubectl port-forward svc/finops-dashboard 8090:8090 -n kube-system
 # → open http://localhost:8090
 
-# API health
+# API health checks
 curl http://localhost:8090/health
 curl http://localhost:8090/api/status
+curl http://localhost:8090/api/config
 ```
 
 ### Full deployment sequence
@@ -284,12 +306,15 @@ flowchart LR
 
 ---
 
-## 4 — Dry-Run (recommended before go-live)
+## 6 — Dry-Run (recommended before go-live)
 
-Run for a week before enabling live mutations to validate the scheduling decisions match your expectations:
+Run for a week before enabling live mutations to validate that scheduling decisions match your expectations:
 
 ```bash
-# Edit manifests/configmap.yaml → DRY_RUN: "true"
+# Helm
+helm upgrade finops-scaler ./helm/finops-scaler --set config.dryRun=true
+
+# Raw manifests — edit configmap.yaml → DRY_RUN: "true"
 kubectl apply -f manifests/configmap.yaml
 kubectl rollout restart deployment/finops-scaler -n kube-system
 
@@ -297,11 +322,49 @@ kubectl rollout restart deployment/finops-scaler -n kube-system
 kubectl logs -f deployment/finops-scaler -n kube-system | grep -E "DRY-RUN|low-activity|Restoring"
 ```
 
-Expected dry-run output:
+Expected output:
 ```
 [DRY-RUN] Would set default/api-server replicas → 0
 [DRY-RUN] Would cordon node-2
 [DRY-RUN] Would drain node-2
+```
+
+---
+
+## 7 — Run the controller locally (demo mode)
+
+The controller also runs locally without any cluster — useful for testing schedule logic or Prophet tuning:
+
+```bash
+# macOS / Linux
+DEMO_MODE=true DRY_RUN=true python -m controller.main
+
+# Windows PowerShell
+$env:DEMO_MODE="true"; $env:DRY_RUN="true"; python -m controller.main
+```
+
+Expected output:
+```
+INFO  controller.main  Controller started (loop=60s, demo=True, prophet=False, recovered=False)
+INFO  controller.main  Entering low-activity window — scaling down eligible deployments
+INFO  controller.demo_stub  [DEMO] Scaled default/api-server → 0 replicas
+INFO  controller.demo_stub  [DEMO] Cordoned demo-node-2
+```
+
+---
+
+## Makefile reference
+
+```bash
+make demo      # docker compose up, demo mode → http://localhost:8090
+make full      # docker compose --profile full up (dashboard + controller)
+make dev       # hot-reload local dev, backend :8090 + frontend :5173 (macOS/Linux)
+make dev-win   # same, Windows PowerShell
+make build     # npm ci + npm run build (production frontend bundle)
+make test      # pytest tests/ -v
+make stop      # docker compose down
+make logs      # docker compose logs -f
+make clean     # remove containers, images, and dist/
 ```
 
 ---
@@ -354,19 +417,20 @@ Expected dry-run output:
 | `AWS_REGION` | — | e.g. `us-east-1` |
 | `NODE_HOURLY_COST` | `0.192` | Fallback rate (USD/hr per node) |
 
+> All of the above can also be set live via **⚙ Settings** in the dashboard — changes take effect without a restart.
+
 ---
 
 ## Troubleshooting
 
-### Demo mode: dashboard shows no data
+### Dashboard shows no data
 
-Check that the backend started successfully:
 ```bash
-curl http://localhost:8090/health     # should return {"status":"ok"}
-curl http://localhost:8090/api/status # should return JSON with demo data
+curl http://localhost:8090/health      # → {"status":"ok"}
+curl http://localhost:8090/api/status  # → JSON with cluster state
 ```
 
-If the frontend shows a connection error banner, verify the Vite proxy is working — the dev server must be running on port `5173` and the backend on port `8090`.
+If health returns an error, the backend isn't running. If the frontend shows a connection banner, verify the backend is on port `8090` and the frontend dev server is on `5173`.
 
 ### "Prophet not installed" warning
 
@@ -374,8 +438,7 @@ If the frontend shows a connection error banner, verify the Vite proxy is workin
 pip install -r requirements-prophet.txt
 # If Stan compilation fails on Linux:
 sudo apt-get install -y build-essential
-pip install pystan==3.8.0
-pip install prophet
+pip install pystan==3.8.0 prophet
 ```
 
 ### Controller pod CrashLoopBackOff
@@ -385,26 +448,29 @@ kubectl logs deployment/finops-scaler -n kube-system --previous
 ```
 
 Common causes:
-- **RBAC** — verify `finops-scaler` ServiceAccount has ClusterRole binding: `kubectl get clusterrolebinding finops-scaler`
-- **Prometheus unreachable** — the controller logs `Cannot fetch node CPU metrics`; check the `PROMETHEUS_URL` env var
-- **No business days configured** — `BUSINESS_DAYS` must be a non-empty comma-separated list
+- **RBAC** — verify ClusterRole binding: `kubectl get clusterrolebinding finops-scaler`
+- **Prometheus unreachable** — controller logs `Cannot fetch node CPU metrics`; check `PROMETHEUS_URL`
+- **No business days** — `BUSINESS_DAYS` must be a non-empty comma-separated list
 
 ### Dashboard shows $0.00 savings
 
-The savings tracker needs the controller to have completed at least one cordon/uncordon cycle. In a fresh deployment, savings accumulate from the first successful scale-down event. Use the demo mode to see pre-seeded savings data immediately.
+The savings tracker needs the controller to have completed at least one full cordon → uncordon cycle. Fresh deployments accumulate from the first event. Use demo mode to see pre-seeded history immediately.
 
 ### Prophet predicts active when cluster is idle
 
-Lower `PROPHET_IDLE_THRESHOLD_CORES`. For a cluster that idles at ~0.3 cores total, set:
+Lower `PROPHET_IDLE_THRESHOLD_CORES`. For a cluster idling at ~0.3 cores total:
+
 ```bash
-PROPHET_IDLE_THRESHOLD_CORES=0.4
+PROPHET_IDLE_THRESHOLD_CORES=0.3
 ```
+
+Or set it live via **⚙ Settings → Prediction → Idle Threshold**.
 
 ---
 
 ## What's next
 
-- **Metrics** — Prometheus scrapes `http://<controller-pod>:8080/metrics` for `finops_*` counters and gauges
-- **Grafana** — import the exported `finops_*` metrics into a Grafana dashboard for historical trend analysis
-- **Slack/Teams alerts** — pipe `GET /api/savings` into a weekly digest via a CronJob
-- **Custom schedules** — set `NAMESPACE_FILTER=staging` to scope down to test environments only
+- **Grafana** — scrape the `finops_*` metrics from `:8080/metrics` for historical trend dashboards
+- **Slack/Teams alerts** — pipe `GET /api/savings` into a weekly digest CronJob
+- **Namespace scoping** — `NAMESPACE_FILTER=staging` to trial on test environments first
+- **Prophet tuning** — lower `PROPHET_IDLE_THRESHOLD_CORES` if the cluster idles at < 0.5 cores; raise it if Prophet is too aggressive
