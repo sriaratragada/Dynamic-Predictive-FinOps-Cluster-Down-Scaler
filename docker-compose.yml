@@ -1,0 +1,57 @@
+services:
+
+  # ── Dashboard — FastAPI backend + React frontend ───────────────────────────
+  # Default profile: demo mode, synthetic data, no cluster needed.
+  # Override any value by copying .env.example → .env and editing it.
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${DASHBOARD_PORT:-8090}:8090"
+    environment:
+      DEMO_MODE:              "${DEMO_MODE:-true}"
+      PROMETHEUS_URL:         "${PROMETHEUS_URL:-http://prometheus:9090}"
+      CLOUD_PROVIDER:         "${CLOUD_PROVIDER:-manual}"
+      NODE_INSTANCE_TYPE:     "${NODE_INSTANCE_TYPE:-}"
+      AWS_REGION:             "${AWS_REGION:-}"
+      NODE_HOURLY_COST:       "${NODE_HOURLY_COST:-0.192}"
+      BUSINESS_HOURS_START:   "${BUSINESS_HOURS_START:-07:00}"
+      BUSINESS_HOURS_END:     "${BUSINESS_HOURS_END:-19:00}"
+      BUSINESS_DAYS:          "${BUSINESS_DAYS:-0,1,2,3,4}"
+      TIMEZONE:               "${TIMEZONE:-UTC}"
+      PREWARM_MINUTES:        "${PREWARM_MINUTES:-15}"
+      CORS_ORIGINS:           "${CORS_ORIGINS:-*}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ── Controller — schedule/ML-based scale-down loop ────────────────────────
+  # Only started when you run:  docker compose --profile full up
+  # Requires a reachable Kubernetes API and Prometheus (set values in .env).
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PROMETHEUS_URL:               "${PROMETHEUS_URL:-http://prometheus:9090}"
+      BUSINESS_HOURS_START:         "${BUSINESS_HOURS_START:-07:00}"
+      BUSINESS_HOURS_END:           "${BUSINESS_HOURS_END:-19:00}"
+      BUSINESS_DAYS:                "${BUSINESS_DAYS:-0,1,2,3,4}"
+      TIMEZONE:                     "${TIMEZONE:-UTC}"
+      PREWARM_MINUTES:              "${PREWARM_MINUTES:-15}"
+      DRY_RUN:                      "${DRY_RUN:-true}"
+      DEMO_MODE:                    "${DEMO_MODE:-false}"
+      ENABLE_PROPHET:               "${ENABLE_PROPHET:-false}"
+      PROPHET_TRAINING_WEEKS:       "${PROPHET_TRAINING_WEEKS:-4}"
+      PROPHET_IDLE_THRESHOLD_CORES: "${PROPHET_IDLE_THRESHOLD_CORES:-0.5}"
+      PROPHET_RETRAIN_HOURS:        "${PROPHET_RETRAIN_HOURS:-6}"
+      MIN_REPLICA_FLOOR:            "${MIN_REPLICA_FLOOR:-0}"
+      NODE_UTILISATION_THRESHOLD:   "${NODE_UTILISATION_THRESHOLD:-0.10}"
+      NAMESPACE_FILTER:             "${NAMESPACE_FILTER:-}"
+      LOOP_INTERVAL_SECONDS:        "${LOOP_INTERVAL_SECONDS:-60}"
+    profiles: ["full"]
+    restart: unless-stopped

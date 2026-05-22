@@ -6,6 +6,7 @@ import DollarsSavedPanel from './components/DollarsSavedPanel'
 import DemandCapacityChart from './components/DemandCapacityChart'
 import NodeTable from './components/NodeTable'
 import SettingsPanel from './components/SettingsPanel'
+import DemoBanner from './components/DemoBanner'
 
 const DEFAULT_POLL_MS = 30_000
 
@@ -86,6 +87,10 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {config?.demo_mode && (
+        <DemoBanner onOpenSettings={() => setSettingsOpen(true)} />
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 
