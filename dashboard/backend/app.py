@@ -2,16 +2,18 @@ import asyncio
 import logging
 import os
 import pathlib
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config_store, pricing
+from .auth import require_token
 from .k8s_client import K8sReader
 from .prewarm import get_controller as _get_prewarm
 from .savings_tracker import SavingsTracker
@@ -26,7 +28,46 @@ logger = logging.getLogger(__name__)
 # Prometheus demo mode is dynamic — reads from config_store on every request.
 _STARTUP_DEMO = os.environ.get("DEMO_MODE", "false").lower() == "true"
 
-app = FastAPI(title="FinOps Dashboard API", docs_url="/api/docs", redoc_url=None)
+_k8s: Optional[K8sReader] = None
+_tracker: Optional[SavingsTracker] = None
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """FastAPI lifespan — initialise K8s reader and savings tracker on startup."""
+    global _k8s, _tracker
+
+    if _STARTUP_DEMO:
+        from .demo_stub import DemoK8sReader  # noqa: PLC0415
+        _k8s = DemoK8sReader()
+        logger.info("DEMO MODE active — using synthetic data (no K8s or Prometheus needed)")
+    else:
+        try:
+            _k8s = K8sReader()
+            logger.info("Kubernetes client initialised")
+        except Exception as exc:
+            logger.warning("K8s unavailable (no cluster?): %s", exc)
+
+        try:
+            pricing.get_hourly_rate()
+        except Exception as exc:
+            logger.warning("Pricing init failed: %s", exc)
+
+        if _k8s:
+            _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
+            asyncio.create_task(_tracker.start())
+
+    yield  # application runs here
+
+    # Shutdown — nothing to clean up explicitly
+
+
+app = FastAPI(
+    title="FinOps Dashboard API",
+    docs_url="/api/docs",
+    redoc_url=None,
+    lifespan=_lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,35 +75,6 @@ app.add_middleware(
     allow_methods=["GET", "PATCH", "POST"],
     allow_headers=["*"],
 )
-
-_k8s: Optional[K8sReader] = None
-_tracker: Optional[SavingsTracker] = None
-
-
-@app.on_event("startup")
-async def _startup():
-    global _k8s, _tracker
-
-    if _STARTUP_DEMO:
-        from .demo_stub import DemoK8sReader  # noqa: PLC0415
-        _k8s = DemoK8sReader()
-        logger.info("DEMO MODE active — using synthetic data (no K8s or Prometheus needed)")
-        return
-
-    try:
-        _k8s = K8sReader()
-        logger.info("Kubernetes client initialised")
-    except Exception as exc:
-        logger.warning("K8s unavailable (no cluster?): %s", exc)
-
-    try:
-        pricing.get_hourly_rate()
-    except Exception as exc:
-        logger.warning("Pricing init failed: %s", exc)
-
-    if _k8s:
-        _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
-        asyncio.create_task(_tracker.start())
 
 
 # ------------------------------------------------------------------
@@ -113,7 +125,7 @@ async def get_config():
 
 
 @app.patch("/api/config")
-async def patch_config(request: Request):
+async def patch_config(request: Request, _: None = Depends(require_token)):
     updates = await request.json()
     updated = config_store.patch(updates)
     logger.info("Config updated: %s", list(updates.keys()))
@@ -125,7 +137,7 @@ async def patch_config(request: Request):
 # ------------------------------------------------------------------
 
 @app.post("/api/prewarm")
-async def api_prewarm(request: Request):
+async def api_prewarm(request: Request, _: None = Depends(require_token)):
     """
     Receive an early-intent signal from a frontend client and proactively
     boot the target Knative AI container before the user submits a prompt.

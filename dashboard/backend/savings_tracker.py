@@ -26,9 +26,16 @@ class SavingsTracker:
             saved = self._k8s.read_savings_log()
             self._events = saved["events"]
             self._total_saved = saved["total_saved_usd"]
+            # Restore in-flight active cordons so a pod restart does not
+            # lose cordon start times and under-count savings.
+            active_raw: dict = saved.get("active_cordons", {})
+            self._active = {
+                node: datetime.fromisoformat(ts)
+                for node, ts in active_raw.items()
+            }
             logger.info(
-                "Savings rehydrated: $%.2f total, %d events",
-                self._total_saved, len(self._events),
+                "Savings rehydrated: $%.2f total, %d events, %d active cordon(s)",
+                self._total_saved, len(self._events), len(self._active),
             )
         except Exception as exc:
             logger.warning("Could not rehydrate savings log: %s", exc)
@@ -57,11 +64,23 @@ class SavingsTracker:
             except Exception:
                 pass
 
-        # Newly cordoned
+        # Newly cordoned — persist start time immediately so a pod restart
+        # can recover the correct duration even before the node uncordons.
+        new_cordons = False
         for node in current:
             if node not in self._active:
                 self._active[node] = now
+                new_cordons = True
                 logger.info("Cordon detected: %s at %s", node, now.isoformat())
+        if new_cordons:
+            try:
+                self._k8s.write_savings_log({
+                    "events": self._events,
+                    "total_saved_usd": self._total_saved,
+                    "active_cordons": {n: dt.isoformat() for n, dt in self._active.items()},
+                })
+            except Exception as exc:
+                logger.warning("Could not persist active cordons: %s", exc)
 
         # Uncordoned → completed savings event
         for node in list(self._active):
@@ -85,6 +104,7 @@ class SavingsTracker:
                     self._k8s.write_savings_log({
                         "events": self._events,
                         "total_saved_usd": self._total_saved,
+                        "active_cordons": {n: dt.isoformat() for n, dt in self._active.items()},
                     })
                 except Exception as exc:
                     logger.warning("Could not persist savings: %s", exc)

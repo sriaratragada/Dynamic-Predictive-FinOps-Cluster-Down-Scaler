@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "finops-scaler.dashboard.fullname" . }}-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "finops-scaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+data:
+  # Connection
+  PROMETHEUS_URL: {{ .Values.dashboard.config.prometheusUrl | quote }}
+  DEMO_MODE: {{ .Values.dashboard.config.demoMode | quote }}
+
+  # Cloud & Pricing
+  CLOUD_PROVIDER: {{ .Values.dashboard.config.cloudProvider | quote }}
+  NODE_INSTANCE_TYPE: {{ .Values.dashboard.config.nodeInstanceType | quote }}
+  NODE_HOURLY_COST: {{ .Values.dashboard.config.nodeHourlyCost | quote }}
+  AWS_REGION: {{ .Values.dashboard.config.awsRegion | quote }}
+
+  # State ConfigMaps
+  STATE_CONFIGMAP_NAME: {{ .Values.config.stateConfigmapName | quote }}
+  STATE_CONFIGMAP_NS: {{ .Values.config.stateConfigmapNs | quote }}
+  SAVINGS_CONFIGMAP_NAME: {{ .Values.dashboard.config.savingsConfigmapName | quote }}
+
+  # Schedule (mirrors controller — shown in dashboard for reference)
+  BUSINESS_HOURS_START: {{ .Values.config.businessHoursStart | quote }}
+  BUSINESS_HOURS_END: {{ .Values.config.businessHoursEnd | quote }}
+  BUSINESS_DAYS: {{ .Values.config.businessDays | quote }}
+  TIMEZONE: {{ .Values.config.timezone | quote }}
+  PREWARM_MINUTES: {{ .Values.config.prewarmMinutes | quote }}
+
+  # Prediction
+  ENABLE_METRIC_OVERRIDE: {{ .Values.config.enableMetricOverride | quote }}
+  ENABLE_PROPHET: {{ .Values.config.enableProphet | quote }}
+  PROPHET_TRAINING_WEEKS: {{ .Values.config.prophetTrainingWeeks | quote }}
+  PROPHET_IDLE_THRESHOLD_CORES: {{ .Values.config.prophetIdleThresholdCores | quote }}
+  PROPHET_RETRAIN_HOURS: {{ .Values.config.prophetRetrainHours | quote }}
+
+  # Dashboard UX
+  DASHBOARD_PORT: {{ .Values.dashboard.port | quote }}
+  CORS_ORIGINS: {{ .Values.dashboard.config.corsOrigins | quote }}
+  POLL_INTERVAL_SECONDS: {{ .Values.dashboard.config.pollIntervalSeconds | quote }}
+  NODE_UTILISATION_THRESHOLD: {{ .Values.config.nodeUtilisationThreshold | quote }}
+  NAMESPACE_FILTER: {{ .Values.config.namespaceFilter | quote }}
+  MIN_REPLICA_FLOOR: {{ .Values.config.minReplicaFloor | quote }}
+
+  # AI Pre-Warm Engine
+  ENABLE_PREWARM: {{ .Values.dashboard.config.enablePrewarm | quote }}
+
+  # Auth — leave empty to disable token protection
+  API_TOKEN: {{ .Values.dashboard.config.apiToken | quote }}

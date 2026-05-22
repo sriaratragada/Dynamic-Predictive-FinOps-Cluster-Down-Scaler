@@ -47,3 +47,9 @@ data:
   # Proactively boots Knative AI containers on early user-intent signals.
   # Enable only on high-conversion AI feature pages.
   ENABLE_PREWARM: "false"
+
+  # ── Auth ─────────────────────────────────────────────────────────────────────
+  # Set to a strong random string to require  Authorization: Bearer <token>  on
+  # PATCH /api/config and POST /api/prewarm.  Leave empty to disable auth.
+  # In production, prefer a Secret → envFrom secretRef rather than a ConfigMap.
+  API_TOKEN: ""

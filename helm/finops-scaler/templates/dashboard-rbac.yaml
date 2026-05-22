@@ -1,0 +1,36 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "finops-scaler.dashboard.fullname" . }}
+  labels:
+    {{- include "finops-scaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+rules:
+  # Read controller state ConfigMap + write savings ConfigMap
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Read nodes for capacity and cordon status
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Read deployments for scale-down status
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "finops-scaler.dashboard.fullname" . }}
+  labels:
+    {{- include "finops-scaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "finops-scaler.dashboard.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "finops-scaler.dashboard.fullname" . }}
+    namespace: {{ .Values.namespace }}

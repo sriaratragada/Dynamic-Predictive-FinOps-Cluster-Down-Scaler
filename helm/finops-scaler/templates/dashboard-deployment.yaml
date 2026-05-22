@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finops-scaler.dashboard.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "finops-scaler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "finops-scaler.dashboard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "finops-scaler.dashboard.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "finops-scaler.dashboard.fullname" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+      containers:
+        - name: dashboard
+          image: "{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag }}"
+          imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "finops-scaler.dashboard.fullname" . }}-config
+          ports:
+            - name: http
+              containerPort: {{ .Values.dashboard.port | int }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.dashboard.port | int }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.dashboard.port | int }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.dashboard.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

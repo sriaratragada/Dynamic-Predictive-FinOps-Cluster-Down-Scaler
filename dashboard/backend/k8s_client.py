@@ -60,16 +60,20 @@ class K8sReader:
             return {
                 "events": json.loads(raw.get("events", "[]")),
                 "total_saved_usd": float(raw.get("total_saved_usd", "0")),
+                # active_cordons: {node_name: iso-datetime-str} persisted so
+                # a pod restart does not lose in-flight cordon start times.
+                "active_cordons": json.loads(raw.get("active_cordons", "{}")),
             }
         except ApiException as exc:
             if exc.status == 404:
-                return {"events": [], "total_saved_usd": 0.0}
+                return {"events": [], "total_saved_usd": 0.0, "active_cordons": {}}
             raise
 
     def write_savings_log(self, log: Dict):
         data = {
             "events": json.dumps(log["events"]),
             "total_saved_usd": str(round(log["total_saved_usd"], 6)),
+            "active_cordons": json.dumps(log.get("active_cordons", {})),
         }
         cm_obj = client.V1ConfigMap(
             metadata=client.V1ObjectMeta(name=self._savings_name, namespace=self._state_ns),

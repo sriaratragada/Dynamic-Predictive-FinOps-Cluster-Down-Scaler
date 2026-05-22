@@ -30,3 +30,18 @@ Selector labels (used in Deployment matchLabels).
 app.kubernetes.io/name: {{ include "finops-scaler.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+Dashboard full name: release + chart + "-dashboard"
+*/}}
+{{- define "finops-scaler.dashboard.fullname" -}}
+{{- printf "%s-%s-dashboard" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Dashboard selector labels.
+*/}}
+{{- define "finops-scaler.dashboard.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "finops-scaler.name" . }}-dashboard
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

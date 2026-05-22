@@ -72,3 +72,50 @@ resources:
   limits:
     cpu: "200m"
     memory: "128Mi"
+
+# ── Dashboard ──────────────────────────────────────────────────────────────────
+
+dashboard:
+  image:
+    repository: finops-dashboard
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # Port the dashboard listens on (inside the container)
+  port: 8090
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+  config:
+    # Connection
+    prometheusUrl: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+    demoMode: "false"
+
+    # Cloud & Pricing
+    cloudProvider: "aws"              # aws | gcp | manual
+    nodeInstanceType: "m5.xlarge"
+    nodeHourlyCost: "0.192"
+    awsRegion: "us-east-1"
+
+    # Savings ConfigMap (written by dashboard, separate from controller state)
+    savingsConfigmapName: "finops-savings-state"
+
+    # Dashboard UX
+    corsOrigins: "*"
+    pollIntervalSeconds: "30"
+
+    # AI Pre-Warm Engine (optional — enable only on high-conversion pages)
+    enablePrewarm: "false"
+
+    # Bearer token for PATCH /api/config and POST /api/prewarm.
+    # Leave empty to run without authentication (local dev / demo mode).
+    # In production, set this to a strong random string:
+    #   kubectl create secret generic finops-dashboard-token --from-literal=API_TOKEN=<token>
+    # and reference it via envFrom secretRef instead of this configmap value.
+    apiToken: ""
