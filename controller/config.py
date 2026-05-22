@@ -22,6 +22,8 @@ class Config:
     state_configmap_ns: str
     timezone: str
     enable_metric_override: bool
+    dry_run: bool
+    metrics_port: int
 
 
 def load_config() -> Config:
@@ -39,4 +41,6 @@ def load_config() -> Config:
         state_configmap_ns=os.environ.get("STATE_CONFIGMAP_NS", "kube-system"),
         timezone=os.environ.get("TIMEZONE", "UTC"),
         enable_metric_override=os.environ.get("ENABLE_METRIC_OVERRIDE", "false").lower() == "true",
+        dry_run=os.environ.get("DRY_RUN", "false").lower() == "true",
+        metrics_port=int(os.environ.get("METRICS_PORT", "8080")),
     )

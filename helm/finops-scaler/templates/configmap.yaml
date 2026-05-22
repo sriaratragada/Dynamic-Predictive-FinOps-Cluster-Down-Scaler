@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "finops-scaler.fullname" . }}-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "finops-scaler.labels" . | nindent 4 }}
+data:
+  PROMETHEUS_URL: {{ .Values.config.prometheusUrl | quote }}
+  BUSINESS_HOURS_START: {{ .Values.config.businessHoursStart | quote }}
+  BUSINESS_HOURS_END: {{ .Values.config.businessHoursEnd | quote }}
+  BUSINESS_DAYS: {{ .Values.config.businessDays | quote }}
+  PREWARM_MINUTES: {{ .Values.config.prewarmMinutes | quote }}
+  LOOP_INTERVAL_SECONDS: {{ .Values.config.loopIntervalSeconds | quote }}
+  NAMESPACE_FILTER: {{ .Values.config.namespaceFilter | quote }}
+  MIN_REPLICA_FLOOR: {{ .Values.config.minReplicaFloor | quote }}
+  NODE_UTILISATION_THRESHOLD: {{ .Values.config.nodeUtilisationThreshold | quote }}
+  STATE_CONFIGMAP_NAME: {{ .Values.config.stateConfigmapName | quote }}
+  STATE_CONFIGMAP_NS: {{ .Values.config.stateConfigmapNs | quote }}
+  TIMEZONE: {{ .Values.config.timezone | quote }}
+  ENABLE_METRIC_OVERRIDE: {{ .Values.config.enableMetricOverride | quote }}
+  DRY_RUN: {{ .Values.config.dryRun | quote }}
+  METRICS_PORT: {{ .Values.config.metricsPort | quote }}

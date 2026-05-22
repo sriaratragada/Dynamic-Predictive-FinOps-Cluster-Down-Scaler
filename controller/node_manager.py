@@ -28,10 +28,12 @@ class NodeManager:
         core_api: client.CoreV1Api,
         prometheus: PrometheusClient,
         state_store: "StateStore",
+        dry_run: bool = False,
     ):
         self._core = core_api
         self._prom = prometheus
         self._state = state_store
+        self._dry_run = dry_run
 
     # ------------------------------------------------------------------
     # Discovery
@@ -73,14 +75,20 @@ class NodeManager:
     # ------------------------------------------------------------------
 
     def cordon(self, node_name: str):
-        self._core.patch_node(node_name, {"spec": {"unschedulable": True}})
-        logger.info("Cordoned node %s", node_name)
+        if self._dry_run:
+            logger.info("[DRY-RUN] Would cordon node %s", node_name)
+        else:
+            self._core.patch_node(node_name, {"spec": {"unschedulable": True}})
+            logger.info("Cordoned node %s", node_name)
         cordoned = self._state.load_cordoned_nodes()
         if node_name not in cordoned:
             cordoned.append(node_name)
             self._state.save_cordoned_nodes(cordoned)
 
     def uncordon(self, node_name: str):
+        if self._dry_run:
+            logger.info("[DRY-RUN] Would uncordon node %s", node_name)
+            return
         self._core.patch_node(node_name, {"spec": {"unschedulable": False}})
         logger.info("Uncordoned node %s", node_name)
 
@@ -97,6 +105,9 @@ class NodeManager:
     # ------------------------------------------------------------------
 
     def drain(self, node_name: str):
+        if self._dry_run:
+            logger.info("[DRY-RUN] Would drain node %s", node_name)
+            return
         logger.info("Draining node %s", node_name)
         pods = self._core.list_pod_for_all_namespaces(
             field_selector=f"spec.nodeName={node_name}"

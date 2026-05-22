@@ -5,6 +5,7 @@ from datetime import datetime
 from kubernetes import client, config as k8s_config
 from kubernetes.config import ConfigException
 
+from . import telemetry
 from .config import load_config
 from .metrics import PrometheusClient
 from .node_manager import NodeManager
@@ -33,21 +34,30 @@ def run():
     cfg = load_config()
     _load_k8s()
 
+    if cfg.dry_run:
+        logger.warning("*** DRY-RUN MODE ENABLED — no Kubernetes resources will be modified ***")
+
+    telemetry.start_metrics_server(cfg.metrics_port)
+
     core_api = client.CoreV1Api()
     apps_api = client.AppsV1Api()
 
     prometheus = PrometheusClient(cfg.prometheus_url)
-    state_store = StateStore(cfg.state_configmap_name, cfg.state_configmap_ns, core_api)
+    state_store = StateStore(
+        cfg.state_configmap_name, cfg.state_configmap_ns, core_api, dry_run=cfg.dry_run
+    )
     predictor = ActivityPredictor(cfg, prometheus)
-    scaler = DeploymentScaler(apps_api, cfg.namespace_filter, cfg.min_replica_floor)
-    node_mgr = NodeManager(core_api, prometheus, state_store)
+    scaler = DeploymentScaler(
+        apps_api, cfg.namespace_filter, cfg.min_replica_floor, dry_run=cfg.dry_run
+    )
+    node_mgr = NodeManager(core_api, prometheus, state_store, dry_run=cfg.dry_run)
 
-    # Detect whether a previous controller instance already scaled down
     already_scaled_down = bool(state_store.load_replicas())
     logger.info(
-        "Controller started (loop interval %ds, timezone %s, recovered scaled_down=%s)",
+        "Controller started (loop interval %ds, timezone %s, dry_run=%s, recovered scaled_down=%s)",
         cfg.loop_interval_seconds,
         cfg.timezone,
+        cfg.dry_run,
         already_scaled_down,
     )
 
@@ -55,6 +65,7 @@ def run():
         try:
             _tick(cfg, predictor, scaler, node_mgr, state_store)
         except Exception:
+            telemetry.controller_errors.inc()
             logger.exception("Unhandled error in control loop — will retry next tick")
         time.sleep(cfg.loop_interval_seconds)
 
@@ -64,7 +75,6 @@ def _tick(cfg, predictor, scaler, node_mgr, state_store):
     low = predictor.is_low_activity(now)
     mins_to_active = predictor.minutes_until_next_active_window(now)
 
-    # True when we are close enough to the next active window to start pre-warming
     in_prewarm = mins_to_active is not None and mins_to_active <= cfg.prewarm_minutes
 
     currently_scaled_down = bool(state_store.load_replicas())
@@ -94,11 +104,16 @@ def _scale_down_cluster(cfg, scaler, node_mgr, state_store):
     for dep in eligible:
         original = scaler.scale_down(dep)
         state_store.save_replicas(dep.metadata.namespace, dep.metadata.name, original)
+        telemetry.deployments_scaled.labels(namespace=dep.metadata.namespace).inc()
 
     underutil = node_mgr.get_underutilised_nodes(cfg.node_utilisation_threshold)
     for node_name in underutil:
         node_mgr.cordon(node_name)
         node_mgr.drain(node_name)
+
+    telemetry.scaledown_events.inc()
+    telemetry.nodes_cordoned.set(len(underutil))
+    telemetry.replicas_saved.set(sum(state_store.load_replicas().values()))
 
     logger.info(
         "Scale-down complete: %d deployment(s) scaled, %d node(s) cordoned/drained",
@@ -117,6 +132,10 @@ def _scale_up_cluster(scaler, node_mgr, state_store):
         target = saved.get(key, 1)
         scaler.scale_up(dep, target)
         state_store.clear_replicas(dep.metadata.namespace, dep.metadata.name)
+
+    telemetry.scaleup_events.inc()
+    telemetry.nodes_cordoned.set(0)
+    telemetry.replicas_saved.set(0)
 
     logger.info("Scale-up complete: %d deployment(s) restored", len(eligible))
 

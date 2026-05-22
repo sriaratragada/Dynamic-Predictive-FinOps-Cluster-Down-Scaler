@@ -14,10 +14,11 @@ _KEY_CORDONED = "cordoned_nodes"
 class StateStore:
     """Persists scaler state in a Kubernetes ConfigMap so it survives pod restarts."""
 
-    def __init__(self, name: str, namespace: str, core_api: client.CoreV1Api):
+    def __init__(self, name: str, namespace: str, core_api: client.CoreV1Api, dry_run: bool = False):
         self._name = name
         self._namespace = namespace
         self._api = core_api
+        self._dry_run = dry_run
 
     # ------------------------------------------------------------------
     # Replica state
@@ -74,6 +75,9 @@ class StateStore:
         }
 
     def _patch(self, data: dict):
+        if self._dry_run:
+            logger.debug("[DRY-RUN] Would patch state ConfigMap %s/%s", self._namespace, self._name)
+            return
         self._api.patch_namespaced_config_map(
             self._name,
             self._namespace,

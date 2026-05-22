@@ -1,0 +1,13 @@
+apiVersion: v2
+name: finops-scaler
+description: Predictive FinOps cluster down-scaler — scales idle workloads and cordons underutilised nodes outside business hours.
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - finops
+  - kubernetes
+  - cost-optimization
+  - autoscaler
+maintainers:
+  - name: sriaratragada

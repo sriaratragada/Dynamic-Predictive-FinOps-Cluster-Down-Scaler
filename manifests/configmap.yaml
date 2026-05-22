@@ -39,3 +39,9 @@ data:
   # Set to "true" to allow Prometheus metrics to override the schedule during
   # business hours when the cluster is unusually quiet
   ENABLE_METRIC_OVERRIDE: "false"
+
+  # Set to "true" to log all actions without modifying any Kubernetes resources
+  DRY_RUN: "false"
+
+  # Port the controller exposes its own Prometheus /metrics endpoint on
+  METRICS_PORT: "8080"

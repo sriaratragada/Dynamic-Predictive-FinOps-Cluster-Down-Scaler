@@ -1,0 +1,57 @@
+image:
+  repository: finops-scaler
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Namespace for all chart resources
+namespace: kube-system
+
+config:
+  # Prometheus endpoint reachable from inside the cluster
+  prometheusUrl: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+
+  # Schedule (24-hour HH:MM in the configured timezone)
+  businessHoursStart: "07:00"
+  businessHoursEnd: "19:00"
+
+  # Comma-separated weekday numbers: 0=Mon … 6=Sun
+  businessDays: "0,1,2,3,4"
+
+  # Scale-up begins this many minutes before the active window starts
+  prewarmMinutes: "15"
+
+  # Control-loop interval in seconds
+  loopIntervalSeconds: "60"
+
+  # Restrict scaledown to one namespace; leave empty for all namespaces
+  namespaceFilter: ""
+
+  # Minimum replicas to leave running during off-hours (0 = scale to zero)
+  minReplicaFloor: "0"
+
+  # Cordon nodes whose CPU usage is below this fraction of allocatable capacity
+  nodeUtilisationThreshold: "0.10"
+
+  # ConfigMap used to persist replica counts across controller restarts
+  stateConfigmapName: "finops-scaler-state"
+  stateConfigmapNs: "kube-system"
+
+  # IANA timezone name (e.g. America/New_York, Europe/London)
+  timezone: "UTC"
+
+  # Set to "true" to allow Prometheus to override the schedule on quiet days
+  enableMetricOverride: "false"
+
+  # Set to "true" to log actions without modifying any resources
+  dryRun: "false"
+
+  # Port the controller exposes its own /metrics endpoint on
+  metricsPort: "8080"
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "200m"
+    memory: "128Mi"
