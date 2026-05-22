@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: finops-scaler-config
+  namespace: kube-system
+data:
+  # Prometheus endpoint inside the cluster
+  PROMETHEUS_URL: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+
+  # Business hours (24-hour HH:MM, in the configured timezone)
+  BUSINESS_HOURS_START: "07:00"
+  BUSINESS_HOURS_END: "19:00"
+
+  # Comma-separated weekday numbers: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
+  BUSINESS_DAYS: "0,1,2,3,4"
+
+  # Scale-up begins this many minutes before the active window starts
+  PREWARM_MINUTES: "15"
+
+  # How often the control loop runs (seconds)
+  LOOP_INTERVAL_SECONDS: "60"
+
+  # Restrict scaledown to a single namespace (leave empty for all namespaces)
+  NAMESPACE_FILTER: ""
+
+  # Minimum replicas to leave running during off-hours (0 = fully scaled to zero)
+  MIN_REPLICA_FLOOR: "0"
+
+  # Cordon nodes whose CPU usage is below this fraction of allocatable capacity
+  NODE_UTILISATION_THRESHOLD: "0.10"
+
+  # ConfigMap used to persist replica counts across controller restarts
+  STATE_CONFIGMAP_NAME: "finops-scaler-state"
+  STATE_CONFIGMAP_NS: "kube-system"
+
+  # Timezone for schedule evaluation (IANA name, e.g. America/New_York)
+  TIMEZONE: "UTC"
+
+  # Set to "true" to allow Prometheus metrics to override the schedule during
+  # business hours when the cluster is unusually quiet
+  ENABLE_METRIC_OVERRIDE: "false"

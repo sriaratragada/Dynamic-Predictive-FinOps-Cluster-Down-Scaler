@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finops-scaler
+  namespace: kube-system
+  labels:
+    app: finops-scaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: finops-scaler
+  template:
+    metadata:
+      labels:
+        app: finops-scaler
+    spec:
+      serviceAccountName: finops-scaler
+      containers:
+        - name: controller
+          image: finops-scaler:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: finops-scaler-config
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            readOnlyRootFilesystem: true
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60

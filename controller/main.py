@@ -1,0 +1,125 @@
+import logging
+import time
+from datetime import datetime
+
+from kubernetes import client, config as k8s_config
+from kubernetes.config import ConfigException
+
+from .config import load_config
+from .metrics import PrometheusClient
+from .node_manager import NodeManager
+from .predictor import ActivityPredictor
+from .scaler import DeploymentScaler
+from .state_store import StateStore
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+
+def _load_k8s():
+    try:
+        k8s_config.load_incluster_config()
+        logger.info("Kubernetes: using in-cluster config")
+    except ConfigException:
+        k8s_config.load_kube_config()
+        logger.info("Kubernetes: using local kubeconfig")
+
+
+def run():
+    cfg = load_config()
+    _load_k8s()
+
+    core_api = client.CoreV1Api()
+    apps_api = client.AppsV1Api()
+
+    prometheus = PrometheusClient(cfg.prometheus_url)
+    state_store = StateStore(cfg.state_configmap_name, cfg.state_configmap_ns, core_api)
+    predictor = ActivityPredictor(cfg, prometheus)
+    scaler = DeploymentScaler(apps_api, cfg.namespace_filter, cfg.min_replica_floor)
+    node_mgr = NodeManager(core_api, prometheus, state_store)
+
+    # Detect whether a previous controller instance already scaled down
+    already_scaled_down = bool(state_store.load_replicas())
+    logger.info(
+        "Controller started (loop interval %ds, timezone %s, recovered scaled_down=%s)",
+        cfg.loop_interval_seconds,
+        cfg.timezone,
+        already_scaled_down,
+    )
+
+    while True:
+        try:
+            _tick(cfg, predictor, scaler, node_mgr, state_store)
+        except Exception:
+            logger.exception("Unhandled error in control loop — will retry next tick")
+        time.sleep(cfg.loop_interval_seconds)
+
+
+def _tick(cfg, predictor, scaler, node_mgr, state_store):
+    now = datetime.now()
+    low = predictor.is_low_activity(now)
+    mins_to_active = predictor.minutes_until_next_active_window(now)
+
+    # True when we are close enough to the next active window to start pre-warming
+    in_prewarm = mins_to_active is not None and mins_to_active <= cfg.prewarm_minutes
+
+    currently_scaled_down = bool(state_store.load_replicas())
+
+    if low and not in_prewarm and not currently_scaled_down:
+        _scale_down_cluster(cfg, scaler, node_mgr, state_store)
+
+    elif (not low or in_prewarm) and currently_scaled_down:
+        reason = f"pre-warm ({mins_to_active} min to active)" if in_prewarm else "active window"
+        logger.info("Restoring cluster — reason: %s", reason)
+        _scale_up_cluster(scaler, node_mgr, state_store)
+
+    else:
+        logger.debug(
+            "No action (low=%s, prewarm=%s, scaled_down=%s, mins_to_active=%s)",
+            low, in_prewarm, currently_scaled_down, mins_to_active,
+        )
+
+
+def _scale_down_cluster(cfg, scaler, node_mgr, state_store):
+    logger.info("Entering low-activity window — scaling down eligible deployments")
+
+    eligible = scaler.find_eligible()
+    if not eligible:
+        logger.info("No eligible deployments found (label finops.io/scaledown-eligible=true)")
+
+    for dep in eligible:
+        original = scaler.scale_down(dep)
+        state_store.save_replicas(dep.metadata.namespace, dep.metadata.name, original)
+
+    underutil = node_mgr.get_underutilised_nodes(cfg.node_utilisation_threshold)
+    for node_name in underutil:
+        node_mgr.cordon(node_name)
+        node_mgr.drain(node_name)
+
+    logger.info(
+        "Scale-down complete: %d deployment(s) scaled, %d node(s) cordoned/drained",
+        len(eligible), len(underutil),
+    )
+
+
+def _scale_up_cluster(scaler, node_mgr, state_store):
+    node_mgr.uncordon_all()
+
+    saved = state_store.load_replicas()
+    eligible = scaler.find_eligible()
+
+    for dep in eligible:
+        key = f"{dep.metadata.namespace}/{dep.metadata.name}"
+        target = saved.get(key, 1)
+        scaler.scale_up(dep, target)
+        state_store.clear_replicas(dep.metadata.namespace, dep.metadata.name)
+
+    logger.info("Scale-up complete: %d deployment(s) restored", len(eligible))
+
+
+if __name__ == "__main__":
+    run()
