@@ -152,18 +152,19 @@ body {
 .grid {
   display: grid;
   grid-template-columns: 1fr 2fr;
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto auto auto auto;
   gap: 16px;
 }
 
-.status-panel  { grid-column: 1; grid-row: 1; }
-.savings-panel { grid-column: 2; grid-row: 1; }
-.chart-panel   { grid-column: 1 / -1; grid-row: 2; }
-.table-panel   { grid-column: 1 / -1; grid-row: 3; }
+.status-panel        { grid-column: 1; grid-row: 1; }
+.savings-panel       { grid-column: 2; grid-row: 1; }
+.chart-panel         { grid-column: 1 / -1; grid-row: 2; }
+.table-panel         { grid-column: 1 / -1; grid-row: 3; }
+.audit-panel-wrapper { grid-column: 1 / -1; grid-row: 4; }
 
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }
-  .status-panel, .savings-panel, .chart-panel, .table-panel {
+  .status-panel, .savings-panel, .chart-panel, .table-panel, .audit-panel-wrapper {
     grid-column: 1;
   }
 }
@@ -787,6 +788,83 @@ body {
 }
 
 .prophet-sub .settings-field:last-child { margin-bottom: 0; }
+
+/* ── Audit Log Panel ─────────────────────────────────────── */
+.audit-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.panel-header h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.panel-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--surface2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.audit-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px 0;
+}
+
+.audit-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 560px;
+}
+
+.audit-table th {
+  text-align: left;
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.audit-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(51,65,85,0.4);
+  vertical-align: middle;
+}
+
+.audit-table tr:last-child td { border-bottom: none; }
+
+.audit-table tr.audit-row:hover { background: rgba(255,255,255,0.02); }
+
+.audit-node  { font-weight: 600; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+.audit-time  { color: var(--muted); white-space: nowrap; }
+.audit-dur   { color: var(--accent); font-weight: 600; }
+.audit-saved { color: var(--green); font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.audit-right { text-align: right; }
 
 /* ── Toast ───────────────────────────────────────────────── */
 .toast {

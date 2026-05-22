@@ -34,6 +34,12 @@ class Config:
     # (via DCGM_FI_DEV_GPU_UTIL) instead of CPU as the cordon signal.
     enable_gpu_aware: bool
     gpu_idle_threshold: float   # fraction 0.0–1.0; below this → cordon
+    # HPA suspend/resume — set minReplicas=0 on scale-down so HPAs don't fight
+    # the controller; restores the original minReplicas value on scale-up.
+    enable_hpa_suspend: bool
+    # Auto-labeller — automatically labels deployments in namespaces annotated
+    # with finops.io/scaledown-namespace=true as finops.io/scaledown-eligible=true.
+    enable_auto_label: bool
 
 
 def load_config() -> Config:
@@ -59,4 +65,6 @@ def load_config() -> Config:
         prophet_retrain_hours=int(os.environ.get("PROPHET_RETRAIN_HOURS", "6")),
         enable_gpu_aware=os.environ.get("ENABLE_GPU_AWARE", "false").lower() == "true",
         gpu_idle_threshold=float(os.environ.get("GPU_IDLE_THRESHOLD", "0.10")),
+        enable_hpa_suspend=os.environ.get("ENABLE_HPA_SUSPEND", "true").lower() == "true",
+        enable_auto_label=os.environ.get("ENABLE_AUTO_LABEL", "false").lower() == "true",
     )

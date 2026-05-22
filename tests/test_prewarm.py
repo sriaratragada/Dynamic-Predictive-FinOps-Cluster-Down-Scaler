@@ -13,7 +13,6 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 
 from dashboard.backend.prewarm import PrewarmController, SIGNAL_CONFIDENCE
 

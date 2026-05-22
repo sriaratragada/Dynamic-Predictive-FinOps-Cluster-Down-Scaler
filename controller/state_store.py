@@ -9,6 +9,13 @@ logger = logging.getLogger(__name__)
 
 _KEY_REPLICAS = "replicas"
 _KEY_CORDONED = "cordoned_nodes"
+_KEY_HPA      = "hpa_min_replicas"
+
+_DEFAULTS = {
+    _KEY_REPLICAS: "{}",
+    _KEY_CORDONED: "[]",
+    _KEY_HPA:      "{}",
+}
 
 
 class StateStore:
@@ -51,6 +58,24 @@ class StateStore:
         return self._load()[_KEY_CORDONED]
 
     # ------------------------------------------------------------------
+    # HPA min-replicas state
+    # ------------------------------------------------------------------
+
+    def save_hpa_min_replicas(self, namespace: str, name: str, original_min: int):
+        data = self._load()
+        data[_KEY_HPA][f"{namespace}/{name}"] = original_min
+        self._patch(data)
+        logger.debug("Saved HPA state %s/%s min=%d", namespace, name, original_min)
+
+    def load_hpa_min_replicas(self) -> Dict[str, int]:
+        return self._load()[_KEY_HPA]
+
+    def clear_hpa_min_replicas(self, namespace: str, name: str):
+        data = self._load()
+        data[_KEY_HPA].pop(f"{namespace}/{name}", None)
+        self._patch(data)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -62,7 +87,7 @@ class StateStore:
                 raise
         cm = client.V1ConfigMap(
             metadata=client.V1ObjectMeta(name=self._name, namespace=self._namespace),
-            data={_KEY_REPLICAS: "{}", _KEY_CORDONED: "[]"},
+            data=dict(_DEFAULTS),
         )
         return self._api.create_namespaced_config_map(self._namespace, cm)
 
@@ -70,8 +95,9 @@ class StateStore:
         cm = self._ensure()
         raw = cm.data or {}
         return {
-            _KEY_REPLICAS: json.loads(raw.get(_KEY_REPLICAS, "{}")),
-            _KEY_CORDONED: json.loads(raw.get(_KEY_CORDONED, "[]")),
+            _KEY_REPLICAS: json.loads(raw.get(_KEY_REPLICAS, _DEFAULTS[_KEY_REPLICAS])),
+            _KEY_CORDONED: json.loads(raw.get(_KEY_CORDONED, _DEFAULTS[_KEY_CORDONED])),
+            _KEY_HPA:      json.loads(raw.get(_KEY_HPA,      _DEFAULTS[_KEY_HPA])),
         }
 
     def _patch(self, data: dict):
@@ -85,6 +111,7 @@ class StateStore:
                 data={
                     _KEY_REPLICAS: json.dumps(data[_KEY_REPLICAS]),
                     _KEY_CORDONED: json.dumps(data[_KEY_CORDONED]),
+                    _KEY_HPA:      json.dumps(data[_KEY_HPA]),
                 }
             ),
         )

@@ -32,6 +32,8 @@ def cfg():
         prophet_retrain_hours=6,
         enable_gpu_aware=False,
         gpu_idle_threshold=0.10,
+        enable_hpa_suspend=True,
+        enable_auto_label=False,
     )
 
 

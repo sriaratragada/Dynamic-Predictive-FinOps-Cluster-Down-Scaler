@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Optional
 
 from kubernetes import client
 
@@ -15,11 +15,13 @@ class DeploymentScaler:
         namespace_filter: str = "",
         min_floor: int = 0,
         dry_run: bool = False,
+        autoscaling_api=None,
     ):
         self._api = apps_api
         self._ns_filter = namespace_filter
         self._floor = min_floor
         self._dry_run = dry_run
+        self._hpa_api = autoscaling_api  # client.AutoscalingV2Api or None
 
     def find_eligible(self) -> List[client.V1Deployment]:
         """Return all Deployments opted in via the finops scaledown label."""
@@ -63,3 +65,58 @@ class DeploymentScaler:
             namespace,
             client.V1Scale(spec=client.V1ScaleSpec(replicas=replicas)),
         )
+
+    # ------------------------------------------------------------------
+    # HPA suspend / resume
+    # ------------------------------------------------------------------
+
+    def find_hpa(self, deployment: client.V1Deployment) -> Optional[object]:
+        """Return the autoscaling/v2 HPA that targets this deployment, or None."""
+        if self._hpa_api is None:
+            return None
+        ns = deployment.metadata.namespace
+        name = deployment.metadata.name
+        try:
+            hpas = self._hpa_api.list_namespaced_horizontal_pod_autoscaler(ns)
+            for hpa in hpas.items:
+                ref = hpa.spec.scale_target_ref
+                if ref.kind == "Deployment" and ref.name == name:
+                    return hpa
+        except Exception as exc:
+            logger.warning("Could not list HPAs in %s: %s", ns, exc)
+        return None
+
+    def suspend_hpa(self, hpa) -> int:
+        """
+        Patch HPA minReplicas → 0 so it does not fight the scale-down.
+        Returns the original minReplicas value for later restoration.
+        """
+        ns   = hpa.metadata.namespace
+        name = hpa.metadata.name
+        original_min = hpa.spec.min_replicas if hpa.spec.min_replicas is not None else 1
+        if self._dry_run:
+            logger.info(
+                "[DRY-RUN] Would suspend HPA %s/%s (minReplicas %d → 0)",
+                ns, name, original_min,
+            )
+            return original_min
+        self._hpa_api.patch_namespaced_horizontal_pod_autoscaler(
+            name, ns, {"spec": {"minReplicas": 0}}
+        )
+        logger.info("Suspended HPA %s/%s: minReplicas %d → 0", ns, name, original_min)
+        return original_min
+
+    def resume_hpa(self, hpa, original_min: int):
+        """Restore HPA minReplicas to its pre-suspend value."""
+        ns   = hpa.metadata.namespace
+        name = hpa.metadata.name
+        if self._dry_run:
+            logger.info(
+                "[DRY-RUN] Would resume HPA %s/%s (minReplicas → %d)",
+                ns, name, original_min,
+            )
+            return
+        self._hpa_api.patch_namespaced_horizontal_pod_autoscaler(
+            name, ns, {"spec": {"minReplicas": original_min}}
+        )
+        logger.info("Resumed HPA %s/%s: minReplicas → %d", ns, name, original_min)

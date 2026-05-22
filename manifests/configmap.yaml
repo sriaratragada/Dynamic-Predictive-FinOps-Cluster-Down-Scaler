@@ -72,3 +72,14 @@ data:
 
   # Fraction 0.0–1.0 of GPU utilisation below which a GPU node is cordoned
   GPU_IDLE_THRESHOLD: "0.10"
+
+  # ── HPA suspend / resume ────────────────────────────────────────────
+  # When "true", HPA minReplicas is set to 0 during scale-down so the HPA
+  # does not fight the controller.  The original value is restored on scale-up.
+  ENABLE_HPA_SUSPEND: "true"
+
+  # ── Namespace auto-labeller (optional) ──────────────────────────────
+  # When "true", the controller reads namespace annotations and automatically
+  # labels deployments in namespaces annotated with
+  # finops.io/scaledown-namespace=true as finops.io/scaledown-eligible=true.
+  ENABLE_AUTO_LABEL: "false"

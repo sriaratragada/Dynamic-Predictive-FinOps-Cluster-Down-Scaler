@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from 'react'
-import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig } from './api'
-import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData } from './api'
+import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig, fetchEvents } from './api'
+import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData, EventsData } from './api'
 import StatusPanel from './components/StatusPanel'
 import DollarsSavedPanel from './components/DollarsSavedPanel'
 import DemandCapacityChart from './components/DemandCapacityChart'
 import NodeTable from './components/NodeTable'
 import SettingsPanel from './components/SettingsPanel'
 import DemoBanner from './components/DemoBanner'
+import AuditLog from './components/AuditLog'
 
 const DEFAULT_POLL_MS = 30_000
 
@@ -15,6 +16,7 @@ export default function App() {
   const [capacity, setCapacity] = useState<CapacityData | null>(null)
   const [history,  setHistory]  = useState<HistoryData | null>(null)
   const [savings,  setSavings]  = useState<SavingsData | null>(null)
+  const [events,   setEvents]   = useState<EventsData | null>(null)
   const [config,   setConfig]   = useState<ConfigData | null>(null)
   const [error,    setError]    = useState<string | null>(null)
   const [historyHours, setHistoryHours] = useState(24)
@@ -30,16 +32,18 @@ export default function App() {
 
   const refresh = useCallback(async (hours = historyHours) => {
     try {
-      const [s, c, h, sv] = await Promise.all([
+      const [s, c, h, sv, ev] = await Promise.all([
         fetchStatus(),
         fetchCapacity(),
         fetchHistory(hours),
         fetchSavings(),
+        fetchEvents(),
       ])
       setStatus(s)
       setCapacity(c)
       setHistory(h)
       setSavings(sv)
+      setEvents(ev)
       setError(null)
       setLastUpdated(new Date())
     } catch (e) {
@@ -110,6 +114,9 @@ export default function App() {
         </div>
         <div className="table-panel">
           <NodeTable capacity={capacity} savings={savings} />
+        </div>
+        <div className="audit-panel-wrapper">
+          <AuditLog events={events} />
         </div>
       </div>
 

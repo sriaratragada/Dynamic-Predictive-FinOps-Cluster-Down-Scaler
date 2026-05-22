@@ -65,6 +65,13 @@ config:
   # Fraction 0.0–1.0 of GPU utilisation below which a GPU node is cordoned
   gpuIdleThreshold: "0.10"
 
+  # HPA suspend/resume — prevents HPAs from fighting the scale-down controller
+  enableHpaSuspend: "true"
+
+  # Auto-labeller — label deployments in opt-in namespaces automatically
+  # (annotate a namespace with finops.io/scaledown-namespace=true to opt in)
+  enableAutoLabel: "false"
+
 resources:
   requests:
     cpu: "50m"

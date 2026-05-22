@@ -106,7 +106,7 @@ class DemoStateStore:
     """File-backed state store that replaces the ConfigMap-based StateStore."""
 
     def __init__(self):
-        self._data: dict = {"replicas": {}, "cordoned_nodes": []}
+        self._data: dict = {"replicas": {}, "cordoned_nodes": [], "hpa_min_replicas": {}}
         if _STATE_FILE.exists():
             try:
                 self._data = json.loads(_STATE_FILE.read_text())
@@ -137,6 +137,17 @@ class DemoStateStore:
     def load_cordoned_nodes(self) -> List[str]:
         return self._data["cordoned_nodes"]
 
+    def save_hpa_min_replicas(self, namespace: str, name: str, original_min: int):
+        self._data.setdefault("hpa_min_replicas", {})[f"{namespace}/{name}"] = original_min
+        self._save()
+
+    def load_hpa_min_replicas(self) -> Dict[str, int]:
+        return self._data.get("hpa_min_replicas", {})
+
+    def clear_hpa_min_replicas(self, namespace: str, name: str):
+        self._data.get("hpa_min_replicas", {}).pop(f"{namespace}/{name}", None)
+        self._save()
+
 
 # ------------------------------------------------------------------
 # DemoCoreV1Api
@@ -165,6 +176,10 @@ class DemoCoreV1Api:
 
     def create_namespaced_pod_eviction(self, name: str, namespace: str, eviction):
         logger.debug("[DEMO] Would evict pod %s/%s", namespace, name)
+
+    def list_namespace(self):
+        """Return a list with no annotated namespaces — auto-labeller is a no-op in demo mode."""
+        return SimpleNamespace(items=[])
 
     # ConfigMap methods — not called when DemoStateStore is in use
     def read_namespaced_config_map(self, name: str, namespace: str):
@@ -207,3 +222,23 @@ class DemoAppsV1Api:
         replicas = scale.spec.replicas
         self._replicas[f"{namespace}/{name}"] = replicas
         logger.info("[DEMO] Scaled %s/%s → %d replicas", namespace, name, replicas)
+
+    def patch_namespaced_deployment(self, name: str, namespace: str, body: dict):
+        labels = body.get("metadata", {}).get("labels", {})
+        logger.info("[DEMO] Labelled %s/%s: %s", namespace, name, labels)
+
+
+# ------------------------------------------------------------------
+# DemoAutoscalingV2Api
+# ------------------------------------------------------------------
+
+class DemoAutoscalingV2Api:
+    """Duck-typed replacement for kubernetes.client.AutoscalingV2Api."""
+
+    def list_namespaced_horizontal_pod_autoscaler(self, namespace: str):
+        return SimpleNamespace(items=[])  # no HPAs in demo mode
+
+    def patch_namespaced_horizontal_pod_autoscaler(
+        self, name: str, namespace: str, body: dict
+    ):
+        logger.debug("[DEMO] Would patch HPA %s/%s: %s", namespace, name, body)

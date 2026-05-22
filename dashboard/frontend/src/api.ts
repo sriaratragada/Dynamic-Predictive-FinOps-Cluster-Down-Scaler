@@ -76,6 +76,19 @@ export interface ConfigData {
   enable_prewarm: boolean
 }
 
+export interface ScaleEvent {
+  node: string
+  start: string    // ISO-8601 UTC
+  end: string      // ISO-8601 UTC
+  hours: number
+  rate_usd_hr: number
+  saved_usd: number
+}
+
+export interface EventsData {
+  events: ScaleEvent[]
+}
+
 async function get<T>(url: string): Promise<T> {
   const r = await fetch(url)
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
@@ -87,6 +100,7 @@ export const fetchCapacity = ()            => get<CapacityData>('/api/capacity')
 export const fetchHistory  = (hours = 24) => get<HistoryData>(`/api/history?hours=${hours}`)
 export const fetchSavings  = ()            => get<SavingsData>('/api/savings')
 export const fetchConfig   = ()            => get<ConfigData>('/api/config')
+export const fetchEvents   = ()            => get<EventsData>('/api/events')
 
 export async function saveConfig(updates: Partial<ConfigData>): Promise<ConfigData> {
   const r = await fetch('/api/config', {

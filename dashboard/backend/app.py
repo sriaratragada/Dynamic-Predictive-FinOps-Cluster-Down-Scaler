@@ -127,7 +127,7 @@ async def get_config():
 @app.patch("/api/config")
 async def patch_config(request: Request, _: None = Depends(require_token)):
     updates = await request.json()
-    updated = config_store.patch(updates)
+    config_store.patch(updates)
     logger.info("Config updated: %s", list(updates.keys()))
     return config_store.as_dict()
 
@@ -286,6 +286,30 @@ async def api_history(hours: int = 24):
         "scaleup_events": su_events,
         "hours": hours,
     }
+
+
+@app.get("/api/events")
+async def api_events():
+    """
+    Return the audit log — a list of completed cordon/savings events in reverse
+    chronological order (most recent first).  Each event has:
+        node       str   Kubernetes node name
+        start      str   ISO-8601 UTC cordon start time
+        end        str   ISO-8601 UTC cordon end time
+        hours      float Duration in fractional hours
+        saved_usd  float Dollars saved during this cordon window
+    """
+    cfg = config_store.get()
+    if cfg.demo_mode:
+        from .demo_stub import _historical_events  # noqa: PLC0415
+        events = _historical_events()
+        return {"events": list(reversed(events))}
+
+    if _tracker is None:
+        return {"events": []}
+
+    # Most recent first
+    return {"events": list(reversed(_tracker._events))}
 
 
 @app.get("/api/savings")

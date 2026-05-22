@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List
 
 logger = logging.getLogger(__name__)
 

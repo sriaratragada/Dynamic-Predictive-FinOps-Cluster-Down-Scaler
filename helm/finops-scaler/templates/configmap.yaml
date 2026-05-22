@@ -28,3 +28,5 @@ data:
   DEMO_MODE: {{ .Values.config.demoMode | quote }}
   ENABLE_GPU_AWARE: {{ .Values.config.enableGpuAware | quote }}
   GPU_IDLE_THRESHOLD: {{ .Values.config.gpuIdleThreshold | quote }}
+  ENABLE_HPA_SUSPEND: {{ .Values.config.enableHpaSuspend | quote }}
+  ENABLE_AUTO_LABEL: {{ .Values.config.enableAutoLabel | quote }}

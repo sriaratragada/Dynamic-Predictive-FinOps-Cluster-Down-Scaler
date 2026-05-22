@@ -19,7 +19,6 @@ Key setup choices
 """
 
 import copy
-import os
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -303,3 +302,43 @@ async def test_prewarm_valid_token_accepted(client, monkeypatch):
     # Even with valid auth: prewarm disabled by default → {enabled: false}
     assert r.status_code == 200
     assert r.json()["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# GET /api/events
+# ---------------------------------------------------------------------------
+
+async def test_events_returns_valid_shape(client):
+    r = await client.get("/api/events")
+    assert r.status_code == 200
+    data = r.json()
+    assert "events" in data
+    assert isinstance(data["events"], list)
+
+
+async def test_events_demo_has_historical_entries(client):
+    data = (await client.get("/api/events")).json()
+    # Demo mode seeds ~30 days of cordon events
+    assert len(data["events"]) > 0
+
+
+async def test_events_entries_have_expected_fields(client):
+    data = (await client.get("/api/events")).json()
+    if data["events"]:
+        ev = data["events"][0]
+        assert "node" in ev
+        assert "start" in ev
+        assert "end" in ev
+        assert "hours" in ev
+        assert "saved_usd" in ev
+
+
+async def test_events_most_recent_first(client):
+    data = (await client.get("/api/events")).json()
+    events = data["events"]
+    if len(events) >= 2:
+        # Most recent event should have a later end time
+        from datetime import datetime
+        t0 = datetime.fromisoformat(events[0]["end"])
+        t1 = datetime.fromisoformat(events[1]["end"])
+        assert t0 >= t1
