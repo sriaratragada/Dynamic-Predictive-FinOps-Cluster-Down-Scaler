@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: finops-dashboard
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: finops-dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: finops-dashboard
+  labels:
+    app.kubernetes.io/name: finops-dashboard
+rules:
+  # Read state ConfigMap + savings ConfigMap
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Read nodes (capacity + cordoned status)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Read deployments (scaled deployment details)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: finops-dashboard
+  labels:
+    app.kubernetes.io/name: finops-dashboard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: finops-dashboard
+subjects:
+  - kind: ServiceAccount
+    name: finops-dashboard
+    namespace: kube-system
