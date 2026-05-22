@@ -2,7 +2,6 @@ import logging
 from typing import List
 
 from kubernetes import client
-from kubernetes.client.rest import ApiException
 
 logger = logging.getLogger(__name__)
 
