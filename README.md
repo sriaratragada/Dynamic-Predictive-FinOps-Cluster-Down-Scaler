@@ -54,8 +54,11 @@ See **[SETUP.md](SETUP.md)** for all setup paths including full cluster deployme
 - **🔮 Prophet ML forecasting** *(optional)* — trains a Facebook Prophet time-series model on your Prometheus history; predicts idle windows from actual usage patterns instead of a fixed clock
 - **📊 Quiet-day detection** *(optional)* — if live CPU drops below 10 % of a 7-day rolling baseline during business hours, treats it as idle (handles bank holidays automatically)
 - **🔒 Safe scale-down** — only targets Deployments labelled `finops.io/scaledown-eligible=true`; PDB-safe eviction with 5-minute drain timeout
+- **🏷 Namespace auto-labeller** *(optional)* — annotate a namespace with `finops.io/scaledown-namespace=true` and the controller automatically labels all its Deployments; no per-Deployment YAML changes needed
+- **🔗 HPA suspend/resume** — sets HPA `minReplicas: 0` on scale-down so HPAs can't fight the controller; restores the original value on scale-up
 - **🌅 Pre-warm** — uncordons nodes and restores replica counts `PREWARM_MINUTES` (default 15) before the active window opens
 - **💰 Real-time cost tracking** — prices each cordon/uncordon cycle against live AWS/GCP rates; accumulates totals (all-time / this week / this month)
+- **📋 Audit log** — every cordon/uncordon event is recorded with timestamps, duration, and dollars saved; exposed via `GET /api/events` and visible in the dashboard
 - **💾 Restart-safe** — all state persisted in a Kubernetes ConfigMap; survives controller pod restarts
 - **🧪 Demo mode** — full synthetic cluster simulation; no Kubernetes or Prometheus needed
 - **⚡ Smart Pre-Warm Engine** *(optional, high-conversion pages only)* — watches for early user-intent signals (login, hover, input focus) and proactively boots Knative AI containers before the user submits a prompt; eliminates cold-start latency on the pages where it costs the most
@@ -72,7 +75,7 @@ No YAML or environment variable editing required. Click **⚙ Settings** in the 
 | **Cloud & Pricing** | Provider (Manual / AWS / GCP) · instance type · region · hourly rate |
 | **Schedule** | Business hours · active days · timezone · pre-warm minutes |
 | **Prediction** | Metric override · Prophet ML on/off · training window · idle threshold · AI Pre-Warm Engine |
-| **Dashboard** | Poll interval · node utilisation threshold · namespace filter |
+| **Dashboard** | Poll interval · node utilisation threshold · namespace filter · min replica floor |
 
 Changes apply immediately — no restart needed. For Docker and Helm deployments, environment variables and `.env` file options are documented in [SETUP.md](SETUP.md).
 
@@ -110,16 +113,18 @@ DynaPredictingDownScaler/
 │   ├── main.py              # Control loop — _tick() every 60 s
 │   ├── predictor.py         # Schedule + metric-override + Prophet gate
 │   ├── prophet_predictor.py # ProphetPredictor — train, forecast, cache
-│   ├── scaler.py            # Deployment replica management
+│   ├── scaler.py            # Deployment replica mgmt + HPA suspend/resume
+│   ├── auto_labeller.py     # Namespace-annotation-driven deployment labeller
 │   ├── node_manager.py      # Node cordon · drain · uncordon
-│   ├── state_store.py       # ConfigMap persistence layer
+│   ├── state_store.py       # ConfigMap persistence (replicas · nodes · HPA state)
 │   ├── metrics.py           # Prometheus HTTP client (query + query_range)
 │   ├── telemetry.py         # Self-expose finops_* metrics on :8080/metrics
 │   ├── config.py            # Env-var backed Config dataclass
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs (DEMO_MODE)
 ├── dashboard/
 │   ├── backend/
-│   │   ├── app.py             # FastAPI — 6 routes + React SPA serving
+│   │   ├── app.py             # FastAPI — 8 routes + React SPA serving
+│   │   ├── auth.py            # Bearer-token middleware (API_TOKEN)
 │   │   ├── config_store.py    # Hot-patchable DashboardConfig (GET/PATCH /api/config)
 │   │   ├── demo_stub.py       # DemoK8sReader + synthetic Prometheus responses
 │   │   ├── prewarm.py         # PrewarmController — warm cache + async Knative ping
@@ -130,6 +135,7 @@ DynaPredictingDownScaler/
 │   │   ├── App.tsx                     # Polling · settings state · demo banner
 │   │   ├── api.ts                      # Typed fetch helpers + ConfigData interface
 │   │   └── components/
+│   │       ├── AuditLog.tsx            # Cordon event history table (reverse-chron)
 │   │       ├── DemoBanner.tsx          # "Running in demo mode" — opens Settings
 │   │       ├── SettingsPanel.tsx       # Slide-in config drawer (5 sections)
 │   │       ├── Toggle.tsx              # Animated accessible toggle switch
@@ -140,7 +146,7 @@ DynaPredictingDownScaler/
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)
-├── tests/                       # 44 pytest tests · freezegun · pytest-mock
+├── tests/                       # 109 pytest tests · freezegun · pytest-mock
 ├── scripts/
 │   ├── dev.sh                   # One-command local dev (macOS/Linux)
 │   └── dev.ps1                  # One-command local dev (Windows)
@@ -159,14 +165,22 @@ DynaPredictingDownScaler/
 ## Verify it's working
 
 ```bash
-curl http://localhost:8090/health       # {"status":"ok"}
-curl http://localhost:8090/api/status   # cluster state JSON
-curl http://localhost:8090/api/savings  # cost savings JSON
-curl http://localhost:8090/api/config   # live configuration
+curl http://localhost:8090/health        # {"status":"ok"}
+curl http://localhost:8090/api/status    # cluster state JSON
+curl http://localhost:8090/api/savings   # cost savings JSON
+curl http://localhost:8090/api/events    # cordon/uncordon audit log
+curl http://localhost:8090/api/config    # live configuration
 ```
 
-Label workloads for scale-down eligibility (full cluster mode):
+**Label individual workloads** for scale-down eligibility (full cluster mode):
 
 ```bash
 kubectl label deployment my-api finops.io/scaledown-eligible=true
+```
+
+**Or opt in a whole namespace** using the auto-labeller (set `ENABLE_AUTO_LABEL=true`):
+
+```bash
+kubectl annotate namespace staging finops.io/scaledown-namespace=true
+# → controller auto-labels every Deployment in that namespace each tick
 ```

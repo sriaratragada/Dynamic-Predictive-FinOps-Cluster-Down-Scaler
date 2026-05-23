@@ -149,9 +149,12 @@ sequenceDiagram
   C->>K: poll until drained (5 min timeout)
   C->>K: list deployments (finops.io/scaledown-eligible=true)
   K-->>C: [api-server ×3, worker ×5]
+  C->>K: find HPA targeting api-server
+  K-->>C: api-server-hpa (minReplicas=2)
+  C->>K: patch api-server-hpa minReplicas → 0  ← prevents HPA fighting scale-down
   C->>K: scale api-server → 0
   C->>K: scale worker → 0
-  C->>S: save {replicas: {api-server:3, worker:5}, cordoned_nodes: [node-2]}
+  C->>S: save {replicas: {api-server:3, worker:5}, hpa_min_replicas: {api-server:2}, cordoned_nodes: [node-2]}
 ```
 
 ---
@@ -165,10 +168,11 @@ sequenceDiagram
   participant S as State ConfigMap
 
   Note over C: T-minus 15 min before 07:00
-  C->>S: load_replicas() + load_cordoned_nodes()
-  S-->>C: {api-server:3, worker:5} · [node-2]
+  C->>S: load_replicas() + load_hpa_min_replicas() + load_cordoned_nodes()
+  S-->>C: {api-server:3, worker:5} · hpa:{api-server:2} · [node-2]
   C->>K: uncordon(node-2)
   C->>K: scale api-server → 3
+  C->>K: patch api-server-hpa minReplicas → 2  ← restore original HPA setting
   C->>K: scale worker → 5
   C->>S: clear state
   Note over C: Cluster fully ready before business hours
@@ -198,7 +202,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   PR["Push / Pull Request\nto main"] --> L["Lint\nruff check controller/ tests/"]
-  L --> T["Test\npytest · 44 tests · freezegun"]
+  L --> T["Test\npytest · 109 tests · freezegun"]
   T --> D["Docker Build\nfinops-scaler:ci"]
   D --> OK["✅ Ready to merge"]
 ```
@@ -240,6 +244,15 @@ flowchart LR
 │  node-1   ████████░░  4.2 cores  8 cores  52%   ● Ready      —             │
 │  node-2   ██░░░░░░░░  0.3 cores  8 cores   4%   ● Cordoned  $0.19/hr       │
 │  node-3   ██░░░░░░░░  0.4 cores  8 cores   5%   ● Cordoned  $0.19/hr       │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  AUDIT LOG                                                  32 events        │
+│                                                                              │
+│  Node    Cordoned at         Released at          Duration  Saved            │
+│  node-3  May 22, 19:00       May 23, 07:00         12.0h    $2.30           │
+│  node-2  May 22, 19:00       May 23, 07:00         12.0h    $2.30           │
+│  node-3  May 19, 19:00       May 20, 07:00         12.0h    $2.30           │
+│  node-2  May 19, 19:00       May 20, 07:00         12.0h    $2.30           │
+│  …                                                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -457,16 +470,20 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | | `httpx` | Prometheus HTTP API (`/api/v1/query`, `/api/v1/query_range`) |
 | | `pytz` | Timezone-aware schedule evaluation |
 | | `prophet` + `pandas` *(optional)* | Time-series forecasting — train on Prometheus range data |
-| **Controller demo** | `demo_stub.py` | DemoPrometheusClient · DemoStateStore · DemoCoreV1Api · DemoAppsV1Api — synthetic data, no K8s |
-| **Dashboard Backend** | FastAPI + uvicorn | REST API + React static file serving |
+| | `auto_labeller.py` | Reads namespace annotations; patches Deployments with `finops.io/scaledown-eligible=true` each tick |
+| | `autoscaling/v2` API | `find_hpa()` · `suspend_hpa()` (minReplicas→0) · `resume_hpa()` (restores saved value) |
+| **Controller demo** | `demo_stub.py` | DemoPrometheusClient · DemoStateStore · DemoCoreV1Api · DemoAppsV1Api · DemoAutoscalingV2Api — synthetic data, no K8s |
+| **Dashboard Backend** | FastAPI + uvicorn | REST API (8 routes) + React static file serving |
+| | `auth.py` | Per-request `Authorization: Bearer <token>` middleware; reads `API_TOKEN` each call |
 | | `config_store.py` | Mutable `DashboardConfig` — hot-patchable via `PATCH /api/config`, no restart |
-| | `demo_stub.py` | DemoK8sReader + synthetic Prometheus responses for all four endpoints |
+| | `demo_stub.py` | DemoK8sReader + synthetic Prometheus responses for all five endpoints |
 | | `boto3` | AWS EC2 Pricing API (On-Demand Linux rates) |
 | | `google-cloud-billing` | GCP Cloud Billing Catalog SKU lookup |
 | | `asyncio` | Background savings-tracker coroutine |
 | **Dashboard Frontend** | React 18 + TypeScript | Single-page application |
 | | Recharts | ComposedChart — area (CPU used) + line (capacity) + event markers |
 | | `SettingsPanel.tsx` | Slide-in drawer — 5 sections, save via `PATCH /api/config`, toast feedback |
+| | `AuditLog.tsx` | Reverse-chronological cordon event table — node, timestamps, duration, savings |
 | | `DemoBanner.tsx` | First-run hint — opens Settings, dismissible per-session |
 | **Pre-Warm Engine** | `prewarm.py` | `PrewarmController` — warm cache, in-flight dedup, async Knative ping |
 | | `POST /api/prewarm` | Signal endpoint — accepts login/hover/focus events, fires pre-warm if cold |
@@ -477,7 +494,7 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | | `docker-compose.yml` | Demo mode default; `--profile full` adds controller |
 | | Multi-stage Dockerfile | Node 20-alpine builds React → Python 3.12-slim serves it |
 | | `Makefile` | `make demo` · `make dev` · `make test` · `make build` |
-| **CI** | GitHub Actions | `ruff` lint → `pytest` (44 tests) → Docker build |
+| **CI** | GitHub Actions | `ruff` lint → `pytest` (109 tests) → Docker build |
 | **Testing** | pytest + freezegun + pytest-mock | Time-frozen schedule tests + K8s API mocks |
 
 ---
@@ -502,6 +519,8 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | `NODE_UTILISATION_THRESHOLD` | `0.10` | Cordon nodes below this CPU fraction (10%) |
 | `NAMESPACE_FILTER` | *(all)* | Restrict eligible Deployments to one namespace |
 | `ENABLE_METRIC_OVERRIDE` | `false` | Quiet-day detection via Prometheus CPU baseline |
+| `ENABLE_HPA_SUSPEND` | `true` | Patch HPA `minReplicas: 0` on scale-down; restores original value on scale-up |
+| `ENABLE_AUTO_LABEL` | `false` | Auto-label Deployments in namespaces annotated `finops.io/scaledown-namespace=true` |
 
 ### Operations
 
@@ -558,16 +577,18 @@ DynaPredictingDownScaler/
 │   ├── main.py              # Control loop · _tick() · scale-down/up helpers
 │   ├── predictor.py         # Schedule + metric-override + Prophet gate
 │   ├── prophet_predictor.py # ProphetPredictor — train, forecast 48 h, cache
-│   ├── scaler.py            # Deployment replica management
+│   ├── scaler.py            # Deployment replica mgmt + HPA suspend/resume
+│   ├── auto_labeller.py     # Namespace-annotation-driven deployment labeller
 │   ├── node_manager.py      # Node cordon · drain · uncordon
-│   ├── state_store.py       # ConfigMap persistence layer
+│   ├── state_store.py       # ConfigMap persistence (replicas · nodes · HPA state)
 │   ├── metrics.py           # Prometheus HTTP client (query + query_range)
 │   ├── telemetry.py         # Self-expose finops_* metrics on :8080/metrics
-│   ├── config.py            # Env-var backed Config dataclass (+ Prophet fields)
+│   ├── config.py            # Env-var backed Config dataclass (all features)
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs for DEMO_MODE
 ├── dashboard/
 │   ├── backend/
-│   │   ├── app.py             # FastAPI · GET/PATCH /api/config + 4 data routes
+│   │   ├── app.py             # FastAPI · 8 routes (config, events, status, capacity, history, savings, prewarm, health)
+│   │   ├── auth.py            # Bearer-token middleware (API_TOKEN)
 │   │   ├── config_store.py    # Hot-patchable DashboardConfig singleton
 │   │   ├── demo_stub.py       # DemoK8sReader + synthetic Prometheus responses
 │   │   ├── prewarm.py         # PrewarmController — warm cache + Knative ping (optional)
@@ -576,8 +597,9 @@ DynaPredictingDownScaler/
 │   │   └── pricing.py         # AWS / GCP / manual pricing with 1-hour cache
 │   ├── frontend/src/
 │   │   ├── App.tsx                     # Polling · settings state · demo banner
-│   │   ├── api.ts                      # Typed fetch helpers + ConfigData interface
+│   │   ├── api.ts                      # Typed fetch helpers + all interface types
 │   │   └── components/
+│   │       ├── AuditLog.tsx            # Cordon event history table (reverse-chron)
 │   │       ├── DemoBanner.tsx          # First-run "demo mode" hint → opens Settings
 │   │       ├── SettingsPanel.tsx       # Slide-in config drawer (5 sections)
 │   │       ├── Toggle.tsx              # Animated accessible toggle switch
@@ -588,7 +610,7 @@ DynaPredictingDownScaler/
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)
-├── tests/                       # 44 pytest tests · freezegun · pytest-mock
+├── tests/                       # 109 pytest tests · freezegun · pytest-mock
 ├── scripts/
 │   ├── dev.sh                   # One-command hot-reload dev (macOS/Linux)
 │   └── dev.ps1                  # One-command hot-reload dev (Windows)

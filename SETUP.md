@@ -229,7 +229,9 @@ flowchart LR
 
 ### Label your workloads
 
-Only Deployments with this label are eligible for scale-down:
+Only Deployments with this label are eligible for scale-down. You have two options:
+
+**Option A — label individual Deployments:**
 
 ```bash
 kubectl label deployment my-api    finops.io/scaledown-eligible=true
@@ -238,6 +240,21 @@ kubectl label deployment my-worker finops.io/scaledown-eligible=true
 # Verify:
 kubectl get deployments -A -l finops.io/scaledown-eligible=true
 ```
+
+**Option B — opt in a whole namespace (auto-labeller, recommended for new clusters):**
+
+```bash
+# Enable auto-labeller in values.yaml or configmap:
+#   ENABLE_AUTO_LABEL=true  (default: false)
+
+# Then annotate the namespace — the controller labels every Deployment in it each tick:
+kubectl annotate namespace staging finops.io/scaledown-namespace=true
+kubectl annotate namespace dev     finops.io/scaledown-namespace=true
+
+# Production namespace left unannotated → never touched
+```
+
+The auto-labeller is idempotent — it skips Deployments that already carry the label. New Deployments added to an annotated namespace are picked up automatically on the next tick.
 
 ### Deploy via Helm (recommended)
 
@@ -248,10 +265,18 @@ helm install finops-scaler ./helm/finops-scaler \
   --set config.businessHoursStart=08:00 \
   --set config.businessHoursEnd=18:00
 
-# Optional: enable Prophet
+# Optional: enable Prophet ML forecasting
 helm upgrade finops-scaler ./helm/finops-scaler \
   --set config.enableProphet=true \
   --set config.prophetIdleThresholdCores=1.0
+
+# Optional: auto-label all Deployments in annotated namespaces
+helm upgrade finops-scaler ./helm/finops-scaler \
+  --set config.enableAutoLabel=true
+
+# Optional: disable HPA suspend (if you manage HPAs separately)
+helm upgrade finops-scaler ./helm/finops-scaler \
+  --set config.enableHpaSuspend=false
 
 # Optional: demo mode for testing the chart without a real cluster
 helm upgrade finops-scaler ./helm/finops-scaler \
@@ -284,9 +309,11 @@ kubectl port-forward svc/finops-dashboard 8090:8090 -n kube-system
 # → open http://localhost:8090
 
 # API health checks
-curl http://localhost:8090/health
-curl http://localhost:8090/api/status
-curl http://localhost:8090/api/config
+curl http://localhost:8090/health           # {"status":"ok"}
+curl http://localhost:8090/api/status       # cluster state (cordoned nodes, scaled deployments)
+curl http://localhost:8090/api/config       # live configuration
+curl http://localhost:8090/api/savings      # accumulated cost savings
+curl http://localhost:8090/api/events       # audit log — cordon/uncordon history
 ```
 
 ### Full deployment sequence
@@ -389,6 +416,8 @@ make clean     # remove containers, images, and dist/
 | `NODE_UTILISATION_THRESHOLD` | `0.10` | Cordon nodes below this CPU fraction |
 | `NAMESPACE_FILTER` | *(all)* | Restrict to one namespace |
 | `ENABLE_METRIC_OVERRIDE` | `false` | Quiet-day detection via Prometheus baseline |
+| `ENABLE_HPA_SUSPEND` | `true` | Patch HPA `minReplicas: 0` during scale-down; restored on scale-up |
+| `ENABLE_AUTO_LABEL` | `false` | Label Deployments in namespaces annotated `finops.io/scaledown-namespace=true` |
 
 ### Operations
 
@@ -471,6 +500,7 @@ Or set it live via **⚙ Settings → Prediction → Idle Threshold**.
 ## What's next
 
 - **Grafana** — scrape the `finops_*` metrics from `:8080/metrics` for historical trend dashboards
-- **Slack/Teams alerts** — pipe `GET /api/savings` into a weekly digest CronJob
-- **Namespace scoping** — `NAMESPACE_FILTER=staging` to trial on test environments first
+- **Slack/Teams alerts** — pipe `GET /api/savings` into a weekly digest CronJob; `GET /api/events` gives per-cordon line items
+- **Namespace scoping** — `NAMESPACE_FILTER=staging` to trial on test environments first, or use `ENABLE_AUTO_LABEL=true` to opt entire namespaces in via annotation
 - **Prophet tuning** — lower `PROPHET_IDLE_THRESHOLD_CORES` if the cluster idles at < 0.5 cores; raise it if Prophet is too aggressive
+- **HPA co-existence** — `ENABLE_HPA_SUSPEND=true` (default) ensures HPAs don't fight scale-down; set to `false` only if you manage HPA minReplicas yourself during off-hours
