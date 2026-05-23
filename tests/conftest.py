@@ -34,6 +34,12 @@ def cfg():
         gpu_idle_threshold=0.10,
         enable_hpa_suspend=True,
         enable_auto_label=False,
+        enable_k8s_events=True,
+        webhook_url="",
+        cluster_name="",
+        enable_leader_election=True,
+        leader_lease_duration=30,
+        enable_preflight=True,
     )
 
 

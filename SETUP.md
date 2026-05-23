@@ -418,6 +418,12 @@ make clean     # remove containers, images, and dist/
 | `ENABLE_METRIC_OVERRIDE` | `false` | Quiet-day detection via Prometheus baseline |
 | `ENABLE_HPA_SUSPEND` | `true` | Patch HPA `minReplicas: 0` during scale-down; restored on scale-up |
 | `ENABLE_AUTO_LABEL` | `false` | Label Deployments in namespaces annotated `finops.io/scaledown-namespace=true` |
+| `ENABLE_K8S_EVENTS` | `true` | Emit native K8s Events for every scale/cordon transition |
+| `WEBHOOK_URL` | *(empty)* | Slack-compatible endpoint to notify on scale events (leave empty to disable) |
+| `CLUSTER_NAME` | *(empty)* | Human-readable cluster identifier included in webhook payloads |
+| `ENABLE_LEADER_ELECTION` | `true` | Use `coordination.k8s.io/v1` Lease to elect one active leader among replicas |
+| `LEADER_LEASE_DURATION` | `30` | Lease validity in seconds; set `replicaCount: 2` in Helm for HA |
+| `ENABLE_PREFLIGHT` | `true` | Run startup PASS/WARN/FAIL checks before entering the control loop |
 
 ### Operations
 

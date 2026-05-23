@@ -30,3 +30,9 @@ data:
   GPU_IDLE_THRESHOLD: {{ .Values.config.gpuIdleThreshold | quote }}
   ENABLE_HPA_SUSPEND: {{ .Values.config.enableHpaSuspend | quote }}
   ENABLE_AUTO_LABEL: {{ .Values.config.enableAutoLabel | quote }}
+  ENABLE_K8S_EVENTS: {{ .Values.config.enableK8sEvents | quote }}
+  WEBHOOK_URL: {{ .Values.config.webhookUrl | quote }}
+  CLUSTER_NAME: {{ .Values.config.clusterName | quote }}
+  ENABLE_LEADER_ELECTION: {{ .Values.config.enableLeaderElection | quote }}
+  LEADER_LEASE_DURATION: {{ .Values.config.leaderLeaseDuration | quote }}
+  ENABLE_PREFLIGHT: {{ .Values.config.enablePreflight | quote }}

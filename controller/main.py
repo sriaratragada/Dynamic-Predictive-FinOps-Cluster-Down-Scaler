@@ -9,11 +9,13 @@ from kubernetes.config import ConfigException
 from . import telemetry
 from .auto_labeller import AutoLabeller
 from .config import load_config
+from .k8s_events import K8sEventEmitter
 from .metrics import PrometheusClient
 from .node_manager import NodeManager
 from .predictor import ActivityPredictor
 from .scaler import DeploymentScaler
 from .state_store import StateStore
+from .webhook import WebhookNotifier
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,26 +44,41 @@ def run():
             "*** DEMO MODE — synthetic data only, no Kubernetes cluster or Prometheus required ***"
         )
         from .demo_stub import (  # noqa: PLC0415
-            DemoAppsV1Api, DemoAutoscalingV2Api, DemoCoreV1Api,
-            DemoPrometheusClient, DemoStateStore,
+            DemoAppsV1Api, DemoAutoscalingV2Api, DemoCoordinationV1Api,
+            DemoCoreV1Api, DemoPrometheusClient, DemoStateStore,
         )
-        core_api        = DemoCoreV1Api()
-        apps_api        = DemoAppsV1Api()
-        autoscaling_api = DemoAutoscalingV2Api()
-        prometheus      = DemoPrometheusClient()
-        state_store     = DemoStateStore()
+        core_api          = DemoCoreV1Api()
+        apps_api          = DemoAppsV1Api()
+        autoscaling_api   = DemoAutoscalingV2Api()
+        coordination_api  = DemoCoordinationV1Api()
+        prometheus        = DemoPrometheusClient()
+        state_store       = DemoStateStore()
     else:
         _load_k8s()
-        core_api        = client.CoreV1Api()
-        apps_api        = client.AppsV1Api()
-        autoscaling_api = client.AutoscalingV2Api() if cfg.enable_hpa_suspend else None
-        prometheus      = PrometheusClient(cfg.prometheus_url)
-        state_store     = StateStore(
+        core_api         = client.CoreV1Api()
+        apps_api         = client.AppsV1Api()
+        autoscaling_api  = client.AutoscalingV2Api() if cfg.enable_hpa_suspend else None
+        coordination_api = client.CoordinationV1Api() if cfg.enable_leader_election else None
+        prometheus       = PrometheusClient(cfg.prometheus_url)
+        state_store      = StateStore(
             cfg.state_configmap_name, cfg.state_configmap_ns, core_api, dry_run=cfg.dry_run
         )
 
     if cfg.dry_run:
         logger.warning("*** DRY-RUN MODE ENABLED — no Kubernetes resources will be modified ***")
+
+    # ── Pre-flight checks ────────────────────────────────────────────────────
+    if cfg.enable_preflight and not _DEMO_MODE:
+        from .preflight import PreflightChecker, log_preflight_results  # noqa: PLC0415
+        checker = PreflightChecker()
+        results = checker.run(cfg, core_api, apps_api, prometheus, autoscaling_api)
+        failed = log_preflight_results(results)
+        if failed:
+            logger.error(
+                "Pre-flight: %d check(s) failed — review the output above and "
+                "fix before running in production",
+                failed,
+            )
 
     telemetry.start_metrics_server(cfg.metrics_port)
 
@@ -80,10 +97,35 @@ def run():
     auto_labeller = AutoLabeller(core_api, apps_api, dry_run=cfg.dry_run) \
         if cfg.enable_auto_label else None
 
+    # Optional: native K8s Events
+    event_emitter = (
+        K8sEventEmitter(core_api, namespace=cfg.state_configmap_ns)
+        if cfg.enable_k8s_events else None
+    )
+
+    # Optional: webhook notifications
+    notifier = (
+        WebhookNotifier(cfg.webhook_url, cluster_name=cfg.cluster_name)
+        if cfg.webhook_url else None
+    )
+
+    # Optional: leader election (HA mode)
+    elector = None
+    if cfg.enable_leader_election and coordination_api is not None:
+        from .leader_election import LeaderElector  # noqa: PLC0415
+        elector = LeaderElector(
+            coordination_api,
+            namespace=cfg.state_configmap_ns,
+            lease_duration_s=cfg.leader_lease_duration,
+            renew_every_s=max(5, cfg.leader_lease_duration // 3),
+        )
+        elector.acquire_blocking()
+
     already_scaled_down = bool(state_store.load_replicas())
     logger.info(
         "Controller started (loop=%ds, tz=%s, dry_run=%s, demo=%s, prophet=%s, "
-        "gpu_aware=%s, hpa_suspend=%s, auto_label=%s, recovered=%s)",
+        "gpu_aware=%s, hpa_suspend=%s, auto_label=%s, k8s_events=%s, "
+        "webhook=%s, leader_election=%s, recovered=%s)",
         cfg.loop_interval_seconds,
         cfg.timezone,
         cfg.dry_run,
@@ -92,19 +134,44 @@ def run():
         cfg.enable_gpu_aware,
         cfg.enable_hpa_suspend,
         cfg.enable_auto_label,
+        cfg.enable_k8s_events,
+        bool(cfg.webhook_url),
+        cfg.enable_leader_election,
         already_scaled_down,
     )
 
     while True:
         try:
-            _tick(cfg, predictor, scaler, node_mgr, state_store, auto_labeller)
+            _tick(
+                cfg, predictor, scaler, node_mgr, state_store,
+                auto_labeller=auto_labeller,
+                event_emitter=event_emitter,
+                notifier=notifier,
+                elector=elector,
+            )
         except Exception:
             telemetry.controller_errors.inc()
             logger.exception("Unhandled error in control loop — will retry next tick")
         time.sleep(cfg.loop_interval_seconds)
 
 
-def _tick(cfg, predictor, scaler, node_mgr, state_store, auto_labeller=None):
+def _tick(
+    cfg,
+    predictor,
+    scaler,
+    node_mgr,
+    state_store,
+    auto_labeller=None,
+    event_emitter=None,
+    notifier=None,
+    elector=None,
+):
+    # Renew leader lease before doing any work; step down if we lost it
+    if elector is not None and not elector.renew():
+        logger.warning("Lost leader lease — skipping tick and re-acquiring")
+        elector.acquire_blocking()
+        return
+
     now = datetime.now()
 
     # Auto-label opt-in namespaces before evaluating eligibility
@@ -124,12 +191,14 @@ def _tick(cfg, predictor, scaler, node_mgr, state_store, auto_labeller=None):
     currently_scaled_down = bool(state_store.load_replicas())
 
     if low and not in_prewarm and not currently_scaled_down:
-        _scale_down_cluster(cfg, scaler, node_mgr, state_store)
+        _scale_down_cluster(cfg, scaler, node_mgr, state_store,
+                            event_emitter=event_emitter, notifier=notifier)
 
     elif (not low or in_prewarm) and currently_scaled_down:
         reason = f"pre-warm ({mins_to_active} min to active)" if in_prewarm else "active window"
         logger.info("Restoring cluster — reason: %s", reason)
-        _scale_up_cluster(scaler, node_mgr, state_store)
+        _scale_up_cluster(scaler, node_mgr, state_store,
+                          event_emitter=event_emitter, notifier=notifier)
 
     else:
         logger.debug(
@@ -138,13 +207,15 @@ def _tick(cfg, predictor, scaler, node_mgr, state_store, auto_labeller=None):
         )
 
 
-def _scale_down_cluster(cfg, scaler, node_mgr, state_store):
+def _scale_down_cluster(cfg, scaler, node_mgr, state_store,
+                         event_emitter=None, notifier=None):
     logger.info("Entering low-activity window — scaling down eligible deployments")
 
     eligible = scaler.find_eligible()
     if not eligible:
         logger.info("No eligible deployments found (label finops.io/scaledown-eligible=true)")
 
+    scaled_dep_names = []
     for dep in eligible:
         ns   = dep.metadata.namespace
         name = dep.metadata.name
@@ -158,15 +229,33 @@ def _scale_down_cluster(cfg, scaler, node_mgr, state_store):
         original = scaler.scale_down(dep)
         state_store.save_replicas(ns, name, original)
         telemetry.deployments_scaled.labels(namespace=ns).inc()
+        scaled_dep_names.append(f"{ns}/{name}")
+
+        if event_emitter is not None:
+            try:
+                event_emitter.deployment_scaled_down(ns, name, original)
+            except Exception:
+                logger.debug("K8s Event emit failed", exc_info=True)
 
     underutil = node_mgr.get_underutilised_nodes(cfg.node_utilisation_threshold)
     for node_name in underutil:
         node_mgr.cordon(node_name)
         node_mgr.drain(node_name)
+        if event_emitter is not None:
+            try:
+                event_emitter.node_cordoned(node_name)
+            except Exception:
+                logger.debug("K8s Event emit failed", exc_info=True)
 
     telemetry.scaledown_events.inc()
     telemetry.nodes_cordoned.set(len(underutil))
     telemetry.replicas_saved.set(sum(state_store.load_replicas().values()))
+
+    if notifier is not None:
+        try:
+            notifier.notify_scale_down(scaled_dep_names, underutil, savings_rate_usd_hr=0.0)
+        except Exception:
+            logger.debug("Webhook notify_scale_down failed", exc_info=True)
 
     logger.info(
         "Scale-down complete: %d deployment(s) scaled, %d node(s) cordoned/drained",
@@ -174,13 +263,23 @@ def _scale_down_cluster(cfg, scaler, node_mgr, state_store):
     )
 
 
-def _scale_up_cluster(scaler, node_mgr, state_store):
+def _scale_up_cluster(scaler, node_mgr, state_store,
+                       event_emitter=None, notifier=None):
+    cordoned_nodes = state_store.load_cordoned_nodes()
     node_mgr.uncordon_all()
+
+    for node_name in cordoned_nodes:
+        if event_emitter is not None:
+            try:
+                event_emitter.node_uncordoned(node_name)
+            except Exception:
+                logger.debug("K8s Event emit failed", exc_info=True)
 
     saved     = state_store.load_replicas()
     saved_hpa = state_store.load_hpa_min_replicas()
     eligible  = scaler.find_eligible()
 
+    restored_dep_names = []
     for dep in eligible:
         ns   = dep.metadata.namespace
         name = dep.metadata.name
@@ -189,6 +288,13 @@ def _scale_up_cluster(scaler, node_mgr, state_store):
         target = saved.get(key, 1)
         scaler.scale_up(dep, target)
         state_store.clear_replicas(ns, name)
+        restored_dep_names.append(f"{ns}/{name}")
+
+        if event_emitter is not None:
+            try:
+                event_emitter.deployment_scaled_up(ns, name, target)
+            except Exception:
+                logger.debug("K8s Event emit failed", exc_info=True)
 
         # Restore HPA after deployments are back up
         if key in saved_hpa:
@@ -200,6 +306,12 @@ def _scale_up_cluster(scaler, node_mgr, state_store):
     telemetry.scaleup_events.inc()
     telemetry.nodes_cordoned.set(0)
     telemetry.replicas_saved.set(0)
+
+    if notifier is not None:
+        try:
+            notifier.notify_scale_up(restored_dep_names, cordoned_nodes, savings_usd=0.0)
+        except Exception:
+            logger.debug("Webhook notify_scale_up failed", exc_info=True)
 
     logger.info("Scale-up complete: %d deployment(s) restored", len(eligible))
 

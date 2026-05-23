@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "finops-scaler.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       {{- include "finops-scaler.selectorLabels" . | nindent 6 }}
@@ -24,6 +24,11 @@ spec:
         - name: controller
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           envFrom:
             - configMapRef:
                 name: {{ include "finops-scaler.fullname" . }}-config

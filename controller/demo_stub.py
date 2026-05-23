@@ -181,6 +181,10 @@ class DemoCoreV1Api:
         """Return a list with no annotated namespaces — auto-labeller is a no-op in demo mode."""
         return SimpleNamespace(items=[])
 
+    def create_namespaced_event(self, namespace: str, body):
+        """No-op: K8s Events are not emitted in demo mode."""
+        logger.debug("[DEMO] Would emit K8s Event in namespace %s", namespace)
+
     # ConfigMap methods — not called when DemoStateStore is in use
     def read_namespaced_config_map(self, name: str, namespace: str):
         raise RuntimeError("Demo mode: ConfigMap access not supported — use DemoStateStore")
@@ -226,6 +230,37 @@ class DemoAppsV1Api:
     def patch_namespaced_deployment(self, name: str, namespace: str, body: dict):
         labels = body.get("metadata", {}).get("labels", {})
         logger.info("[DEMO] Labelled %s/%s: %s", namespace, name, labels)
+
+
+# ------------------------------------------------------------------
+# DemoCoordinationV1Api
+# ------------------------------------------------------------------
+
+class DemoCoordinationV1Api:
+    """
+    Duck-typed replacement for kubernetes.client.CoordinationV1Api.
+
+    In demo mode, leader election is a no-op — this instance always wins
+    immediately and never needs to renew.
+    """
+
+    def __init__(self):
+        self._lease = None
+
+    def read_namespaced_lease(self, name: str, namespace: str):
+        if self._lease is None:
+            raise RuntimeError("404 Not Found")
+        return self._lease
+
+    def create_namespaced_lease(self, namespace: str, body):
+        self._lease = body
+        logger.debug("[DEMO] Created leader lease")
+        return body
+
+    def replace_namespaced_lease(self, name: str, namespace: str, body):
+        self._lease = body
+        logger.debug("[DEMO] Renewed leader lease")
+        return body
 
 
 # ------------------------------------------------------------------

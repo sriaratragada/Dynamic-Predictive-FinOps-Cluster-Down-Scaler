@@ -83,3 +83,28 @@ data:
   # labels deployments in namespaces annotated with
   # finops.io/scaledown-namespace=true as finops.io/scaledown-eligible=true.
   ENABLE_AUTO_LABEL: "false"
+
+  # ── Kubernetes Events ────────────────────────────────────────────────
+  # When "true", emit native K8s Events for every scale/cordon transition.
+  # Events appear in `kubectl get events -n kube-system`.
+  ENABLE_K8S_EVENTS: "true"
+
+  # ── Webhook notifications ────────────────────────────────────────────
+  # POST a Slack-compatible JSON payload to this URL on scale-down/up.
+  # Leave empty to disable.
+  WEBHOOK_URL: ""
+
+  # Human-readable cluster name included in webhook payloads.
+  CLUSTER_NAME: ""
+
+  # ── Leader election ──────────────────────────────────────────────────
+  # When "true" (default), only one replica executes the control loop.
+  # Run 2+ replicas for HA: helm install ... --set replicaCount=2
+  ENABLE_LEADER_ELECTION: "true"
+
+  # How long (seconds) a lease remains valid after its last renewal.
+  LEADER_LEASE_DURATION: "30"
+
+  # ── Pre-flight validation ────────────────────────────────────────────
+  # When "true" (default), run startup checks before entering the loop.
+  ENABLE_PREFLIGHT: "true"

@@ -48,6 +48,16 @@ rules:
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
     verbs: ["get", "list", "watch", "patch", "update"]
+
+  # Kubernetes Events — emit scale/cordon events visible via kubectl get events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+  # Leader election — Lease in coordination.k8s.io/v1
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

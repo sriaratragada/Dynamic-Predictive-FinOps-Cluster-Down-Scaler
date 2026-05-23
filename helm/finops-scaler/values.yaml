@@ -3,6 +3,9 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+# Number of controller replicas.  Set to 2+ with enableLeaderElection=true for HA.
+replicaCount: 1
+
 # Namespace for all chart resources
 namespace: kube-system
 
@@ -71,6 +74,25 @@ config:
   # Auto-labeller — label deployments in opt-in namespaces automatically
   # (annotate a namespace with finops.io/scaledown-namespace=true to opt in)
   enableAutoLabel: "false"
+
+  # Kubernetes Events — emit native events visible via kubectl get events
+  enableK8sEvents: "true"
+
+  # Webhook — POST Slack-compatible JSON to this URL on every scale event.
+  # Example: https://hooks.slack.com/services/...  Leave empty to disable.
+  webhookUrl: ""
+
+  # Human-readable cluster name included in webhook payloads
+  clusterName: ""
+
+  # Leader election — only one replica executes the loop; set replicaCount=2 for HA
+  enableLeaderElection: "true"
+
+  # Lease duration in seconds (renew every ~1/3 of this value)
+  leaderLeaseDuration: "30"
+
+  # Pre-flight — run startup validation checks before the control loop
+  enablePreflight: "true"
 
 resources:
   requests:

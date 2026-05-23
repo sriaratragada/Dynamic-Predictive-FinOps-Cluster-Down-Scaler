@@ -40,6 +40,20 @@ class Config:
     # Auto-labeller — automatically labels deployments in namespaces annotated
     # with finops.io/scaledown-namespace=true as finops.io/scaledown-eligible=true.
     enable_auto_label: bool
+    # Kubernetes Events — emit native K8s Events (kubectl get events) for every
+    # scale-down / scale-up / cordon / uncordon transition.
+    enable_k8s_events: bool
+    # Webhook — POST a Slack-compatible JSON payload to this URL on every
+    # scale-down and scale-up event.  Leave empty to disable.
+    webhook_url: str
+    # Human-readable cluster identifier included in webhook payloads.
+    cluster_name: str
+    # Leader election — only one controller replica executes the control loop;
+    # others wait for the Lease to expire before competing.
+    enable_leader_election: bool
+    leader_lease_duration: int   # seconds; renew every ~1/3 of this value
+    # Pre-flight — run startup validation checks before entering the control loop.
+    enable_preflight: bool
 
 
 def load_config() -> Config:
@@ -67,4 +81,10 @@ def load_config() -> Config:
         gpu_idle_threshold=float(os.environ.get("GPU_IDLE_THRESHOLD", "0.10")),
         enable_hpa_suspend=os.environ.get("ENABLE_HPA_SUSPEND", "true").lower() == "true",
         enable_auto_label=os.environ.get("ENABLE_AUTO_LABEL", "false").lower() == "true",
+        enable_k8s_events=os.environ.get("ENABLE_K8S_EVENTS", "true").lower() == "true",
+        webhook_url=os.environ.get("WEBHOOK_URL", ""),
+        cluster_name=os.environ.get("CLUSTER_NAME", ""),
+        enable_leader_election=os.environ.get("ENABLE_LEADER_ELECTION", "true").lower() == "true",
+        leader_lease_duration=int(os.environ.get("LEADER_LEASE_DURATION", "30")),
+        enable_preflight=os.environ.get("ENABLE_PREFLIGHT", "true").lower() == "true",
     )

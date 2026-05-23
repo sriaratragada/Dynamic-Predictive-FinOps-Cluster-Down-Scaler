@@ -202,7 +202,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   PR["Push / Pull Request\nto main"] --> L["Lint\nruff check controller/ tests/"]
-  L --> T["Test\npytest · 109 tests · freezegun"]
+  L --> T["Test\npytest · 168 tests · freezegun"]
   T --> D["Docker Build\nfinops-scaler:ci"]
   D --> OK["✅ Ready to merge"]
 ```
@@ -472,7 +472,11 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | | `prophet` + `pandas` *(optional)* | Time-series forecasting — train on Prometheus range data |
 | | `auto_labeller.py` | Reads namespace annotations; patches Deployments with `finops.io/scaledown-eligible=true` each tick |
 | | `autoscaling/v2` API | `find_hpa()` · `suspend_hpa()` (minReplicas→0) · `resume_hpa()` (restores saved value) |
-| **Controller demo** | `demo_stub.py` | DemoPrometheusClient · DemoStateStore · DemoCoreV1Api · DemoAppsV1Api · DemoAutoscalingV2Api — synthetic data, no K8s |
+| | `preflight.py` | Startup PASS/WARN/FAIL checks — schedule · Prometheus · node visibility · eligible deployments · Prophet install · HPA RBAC · state ConfigMap |
+| | `k8s_events.py` | `K8sEventEmitter` — emits native K8s Events for scale/cordon transitions (non-fatal if RBAC missing) |
+| | `webhook.py` | `WebhookNotifier` — Slack-compatible HTTP POST on scale-down/up; fire-and-forget, errors swallowed |
+| | `leader_election.py` | `LeaderElector` — `coordination.k8s.io/v1` Lease; blocks non-leaders, steals expired leases |
+| **Controller demo** | `demo_stub.py` | DemoPrometheusClient · DemoStateStore · DemoCoreV1Api · DemoAppsV1Api · DemoAutoscalingV2Api · DemoCoordinationV1Api — synthetic data, no K8s |
 | **Dashboard Backend** | FastAPI + uvicorn | REST API (8 routes) + React static file serving |
 | | `auth.py` | Per-request `Authorization: Bearer <token>` middleware; reads `API_TOKEN` each call |
 | | `config_store.py` | Mutable `DashboardConfig` — hot-patchable via `PATCH /api/config`, no restart |
@@ -494,7 +498,7 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | | `docker-compose.yml` | Demo mode default; `--profile full` adds controller |
 | | Multi-stage Dockerfile | Node 20-alpine builds React → Python 3.12-slim serves it |
 | | `Makefile` | `make demo` · `make dev` · `make test` · `make build` |
-| **CI** | GitHub Actions | `ruff` lint → `pytest` (109 tests) → Docker build |
+| **CI** | GitHub Actions | `ruff` lint → `pytest` (168 tests) → Docker build |
 | **Testing** | pytest + freezegun + pytest-mock | Time-frozen schedule tests + K8s API mocks |
 
 ---
@@ -521,6 +525,12 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | `ENABLE_METRIC_OVERRIDE` | `false` | Quiet-day detection via Prometheus CPU baseline |
 | `ENABLE_HPA_SUSPEND` | `true` | Patch HPA `minReplicas: 0` on scale-down; restores original value on scale-up |
 | `ENABLE_AUTO_LABEL` | `false` | Auto-label Deployments in namespaces annotated `finops.io/scaledown-namespace=true` |
+| `ENABLE_K8S_EVENTS` | `true` | Emit native K8s Events for every scale/cordon transition |
+| `WEBHOOK_URL` | *(empty)* | Slack-compatible endpoint to notify on scale-down / scale-up; leave empty to disable |
+| `CLUSTER_NAME` | *(empty)* | Identifier included in webhook payloads |
+| `ENABLE_LEADER_ELECTION` | `true` | Coordinate multiple replicas via `coordination.k8s.io/v1` Lease |
+| `LEADER_LEASE_DURATION` | `30` | Lease validity window in seconds |
+| `ENABLE_PREFLIGHT` | `true` | Run PASS/WARN/FAIL startup checks before entering the control loop |
 
 ### Operations
 
@@ -584,6 +594,10 @@ DynaPredictingDownScaler/
 │   ├── metrics.py           # Prometheus HTTP client (query + query_range)
 │   ├── telemetry.py         # Self-expose finops_* metrics on :8080/metrics
 │   ├── config.py            # Env-var backed Config dataclass (all features)
+│   ├── preflight.py         # Startup PASS/WARN/FAIL validation checks
+│   ├── k8s_events.py        # Native K8s Event emitter (scale/cordon transitions)
+│   ├── webhook.py           # Slack-compatible HTTP POST notifier
+│   ├── leader_election.py   # coordination.k8s.io/v1 Lease leader election
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs for DEMO_MODE
 ├── dashboard/
 │   ├── backend/
@@ -610,7 +624,7 @@ DynaPredictingDownScaler/
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)
-├── tests/                       # 109 pytest tests · freezegun · pytest-mock
+├── tests/                       # 168 pytest tests · freezegun · pytest-mock
 ├── scripts/
 │   ├── dev.sh                   # One-command hot-reload dev (macOS/Linux)
 │   └── dev.ps1                  # One-command hot-reload dev (Windows)

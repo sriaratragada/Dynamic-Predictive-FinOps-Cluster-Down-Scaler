@@ -62,6 +62,10 @@ See **[SETUP.md](SETUP.md)** for all setup paths including full cluster deployme
 - **💾 Restart-safe** — all state persisted in a Kubernetes ConfigMap; survives controller pod restarts
 - **🧪 Demo mode** — full synthetic cluster simulation; no Kubernetes or Prometheus needed
 - **⚡ Smart Pre-Warm Engine** *(optional, high-conversion pages only)* — watches for early user-intent signals (login, hover, input focus) and proactively boots Knative AI containers before the user submits a prompt; eliminates cold-start latency on the pages where it costs the most
+- **🗳 Leader election** — `coordination.k8s.io/v1` Lease ensures only one replica runs the control loop; set `replicaCount: 2` in Helm for zero-downtime HA
+- **📣 Kubernetes Events** — every scale-down, scale-up, cordon, and uncordon fires a native K8s Event visible via `kubectl get events -n kube-system`
+- **🔔 Webhook notifications** — Slack-compatible HTTP POST on every scale event; works with Slack Incoming Webhooks, PagerDuty, or any HTTP receiver
+- **✅ Pre-flight validation** — structured PASS/WARN/FAIL checks at startup: schedule sanity, Prometheus reachability, eligible deployment count, Prophet install, HPA RBAC, and state ConfigMap
 
 ---
 
@@ -120,6 +124,10 @@ DynaPredictingDownScaler/
 │   ├── metrics.py           # Prometheus HTTP client (query + query_range)
 │   ├── telemetry.py         # Self-expose finops_* metrics on :8080/metrics
 │   ├── config.py            # Env-var backed Config dataclass
+│   ├── preflight.py         # Startup PASS/WARN/FAIL checks (schedule · prom · RBAC · prophet)
+│   ├── k8s_events.py        # Native K8s Event emitter (scale/cordon transitions)
+│   ├── webhook.py           # Slack-compatible HTTP POST notifier (fire-and-forget)
+│   ├── leader_election.py   # coordination.k8s.io/v1 Lease — HA leader election
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs (DEMO_MODE)
 ├── dashboard/
 │   ├── backend/
@@ -146,7 +154,7 @@ DynaPredictingDownScaler/
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)
-├── tests/                       # 109 pytest tests · freezegun · pytest-mock
+├── tests/                       # 168 pytest tests · freezegun · pytest-mock
 ├── scripts/
 │   ├── dev.sh                   # One-command local dev (macOS/Linux)
 │   └── dev.ps1                  # One-command local dev (Windows)
