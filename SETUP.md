@@ -10,11 +10,14 @@
 flowchart TD
   START([Start here]) --> Q0{"Want to try it\nright now?"}
 
-  Q0 -- Yes --> DOCKER["🐳 Docker\n<b>one command</b>\nno installs needed"]
+  Q0 -- "Yes — quick look" --> DOCKER["🐳 Demo Mode\ndocker compose up\nno installs needed"]
   Q0 -- "Need hot-reload\ndev setup" --> DEV["💻 Local Dev\nmake dev / scripts/dev.sh\nbackend + frontend in one command"]
-  Q0 -- "Have a cluster\nto deploy to" --> Q1{ML forecasting?}
+  Q0 -- "Have a cluster" --> Q_WS{"Install anything\nin the cluster?"}
 
-  Q1 -- No --> FULL["🚀 Full Deployment\nHelm or raw manifests\nschedule-based predictor"]
+  Q_WS -- No --> WS["🌐 Web Service\ndocker run + paste kubeconfig\ncontroller runs embedded"]
+  Q_WS -- Yes --> Q1{ML forecasting?}
+
+  Q1 -- No --> FULL["🚀 In-Cluster Deploy\nHelm or raw manifests\nschedule-based predictor"]
   Q1 -- Yes --> Q2{"Prometheus ≥\n4 weeks of metrics?"}
 
   Q2 -- Yes --> PROPHET["🔮 Full + Prophet Mode\ntime-series forecast\nlearned idle windows"]
@@ -22,6 +25,7 @@ flowchart TD
 
   DOCKER --> OPEN["open http://localhost:8090\nclick ⚙ Settings to configure"]
   DEV --> OPEN2["backend :8090 · frontend :5173\nCtrl+C stops both"]
+  WS --> WS_OPEN["open http://localhost:8090\nSettings → // CLUSTER → paste kubeconfig"]
   FULL --> HELM["helm install finops-scaler\nor kubectl apply -f manifests/"]
   PROPHET --> P_EXTRA["pip install -r requirements-prophet.txt\nENABLE_PROPHET=true"]
 ```
@@ -30,14 +34,15 @@ flowchart TD
 
 ## Prerequisites
 
-| Requirement | Docker | Local Dev | Full Deploy | Prophet |
-|:-----------|:------:|:---------:|:-----------:|:-------:|
-| Docker Desktop | ✅ | ❌ | ❌ | ❌ |
-| Python 3.10+ | ❌ | ✅ | ✅ | ✅ |
-| Node.js 18+ | ❌ | ✅ | ❌ optional | ❌ optional |
-| Kubernetes cluster | ❌ | ❌ | ✅ | ✅ |
-| Prometheus | ❌ | ❌ | ✅ | ✅ + 4-week retention |
-| AWS/GCP account | ❌ | ❌ | optional | optional |
+| Requirement | Demo (Docker) | Web Service | Local Dev | In-Cluster | Prophet |
+|:-----------|:------:|:------:|:---------:|:-----------:|:-------:|
+| Docker Desktop | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Python 3.10+ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Node.js 18+ | ❌ | ❌ | ✅ | ❌ optional | ❌ optional |
+| Kubernetes cluster | ❌ | ✅ external | ✅ | ✅ | ✅ |
+| kubeconfig / kubectl | ❌ | ✅ (paste in UI) | ❌ | ✅ | ✅ |
+| Prometheus | ❌ | optional | ❌ | ✅ | ✅ + 4-week retention |
+| AWS/GCP account | ❌ | optional | ❌ | optional | optional |
 
 ---
 
@@ -94,7 +99,87 @@ curl "http://localhost:8090/api/history?hours=24"
 
 ---
 
-## 2 — Local Dev (hot-reload, one command)
+## 2 — Web Service Mode (connect your cluster from the browser)
+
+> Run a single Docker container outside the cluster. Paste your kubeconfig into the Settings panel — the embedded controller loop starts automatically. No Helm, no RBAC manifests, no in-cluster install.
+
+```bash
+docker run -p 8090:8090 ghcr.io/your-org/finops-scaler:latest
+# or build locally:
+docker compose up
+```
+
+Open **http://localhost:8090**, click **⚙ Settings**, scroll to **// CLUSTER**.
+
+```mermaid
+sequenceDiagram
+  actor You
+  participant UI as Browser · Settings Panel
+  participant API as Dashboard API · :8090
+  participant Runner as ControllerRunner\n(daemon thread)
+  participant K8s as Kubernetes API\n(remote cluster)
+
+  You->>UI: Paste kubeconfig → "Validate & Connect"
+  UI->>API: POST /api/connect  {kubeconfig: "..."}
+  API->>K8s: list_node(limit=5)  ← validates credentials
+  K8s-->>API: node list  ✓
+  API->>Runner: start(interval=60s)
+  Runner-->>API: RunnerStatus{connected, running}
+  API-->>UI: {connected: true, cluster_host: "https://…"}
+  Note over UI: Header badge → "⟳ CTRL RUNNING"
+  loop every 60 s
+    Runner->>K8s: list nodes · list eligible deployments
+    Runner->>Runner: _is_low_activity() → scale-down / scale-up
+  end
+  You->>UI: Settings → Stop Loop
+  UI->>API: POST /api/controller/stop
+  API->>Runner: stop()
+```
+
+### What the embedded controller does
+
+The `ControllerRunner` re-implements the core tick logic without importing the `controller/` package (the dashboard Docker image doesn't include it). Each tick:
+
+1. Reads live config from `config_store` (schedule, timezone, threshold, min-replica floor, namespace filter)
+2. Evaluates `_is_low_activity(now)` using `zoneinfo` for timezone-aware schedule checking
+3. On idle → cordons non-control-plane nodes, scales labelled Deployments to `MIN_REPLICA_FLOOR`
+4. On active → uncordons, restores replicas
+5. Persists state to `/tmp/finops-web-state.json`
+
+### API endpoints added for web service mode
+
+| Method | Path | Description |
+|:-------|:-----|:------------|
+| `POST` | `/api/connect` | Accept kubeconfig YAML, validate against cluster, start controller loop |
+| `GET` | `/api/controller` | Return `RunnerStatus` (connected, running, cluster_host, last_tick, last_action, error) |
+| `POST` | `/api/controller/stop` | Stop the controller loop; cluster connection remains |
+
+### Verify
+
+```bash
+curl http://localhost:8090/api/controller
+# {"running": true, "connected": true, "cluster_host": "https://mycluster:6443",
+#  "last_tick": "2026-05-23T14:32:00", "last_action": "no-op", "error": null}
+```
+
+### Limitations vs in-cluster deployment
+
+| Capability | Web Service | In-Cluster |
+|:-----------|:-----------:|:----------:|
+| Schedule-based scale-down | ✅ | ✅ |
+| Savings tracking | ✅ (file-based) | ✅ (ConfigMap) |
+| HPA suspend/resume | ❌ | ✅ |
+| Leader election (multi-replica HA) | ❌ | ✅ |
+| K8s native Events | ❌ | ✅ |
+| Webhook notifications | ❌ | ✅ |
+| Prophet ML forecasting | ❌ | ✅ |
+| Survives controller pod restart | N/A | ✅ |
+
+For production clusters, the in-cluster Helm deployment is recommended.
+
+---
+
+## 3 — Local Dev (hot-reload, one command)
 
 > Both backend and frontend start together, with live-reload. No Docker needed, but requires Python 3.10+ and Node 18+.
 
@@ -128,19 +213,20 @@ The Vite dev server proxies all `/api/*` and `/health` requests to `localhost:80
 
 ---
 
-## 3 — Configuring via the Settings UI
+## 4 — Configuring via the Settings UI
 
 > No env var editing, no YAML, no restarts. All runtime settings are available in the browser.
 
-Once the dashboard is open (whether via Docker or local dev), click **⚙ Settings** in the top-right of the header. A panel slides in from the right with five sections:
+Once the dashboard is open (whether via Docker, web service, or local dev), click **⚙ Settings** in the top-right of the header. A panel slides in from the right with six sections:
 
 | Section | What you configure |
 |:--------|:------------|
-| 🔌 **Connection** | Toggle demo mode on/off · Prometheus URL |
-| ☁️ **Cloud & Pricing** | Cloud provider (Manual / AWS / GCP) · instance type · region · hourly rate |
-| 🗓 **Schedule** | Business hours · active days (pill buttons) · timezone · pre-warm minutes |
-| 🔮 **Prediction** | Metric override · Prophet ML on/off · training weeks · idle threshold · retrain interval |
-| 📊 **Dashboard** | Poll interval · node utilisation threshold · namespace filter · min replica floor |
+| **// CLUSTER** | Paste kubeconfig · start / stop embedded controller loop · connection status badge |
+| **// CONN** | Toggle demo mode on/off · Prometheus URL |
+| **// CLOUD** | Cloud provider (Manual / AWS / GCP) · instance type · region · hourly rate |
+| **// SCHED** | Business hours · active days (pill buttons) · timezone · pre-warm minutes |
+| **// PRED** | Metric override · Prophet ML on/off · training weeks · idle threshold · retrain interval |
+| **// UI** | Poll interval · node utilisation threshold · namespace filter · min replica floor |
 
 Click **Save Changes** — the backend accepts the update, invalidates pricing caches if needed, and the dashboard refreshes data immediately.
 
@@ -148,7 +234,7 @@ Click **Save Changes** — the backend accepts the update, invalidates pricing c
 
 ---
 
-## 4 — Prophet ML Mode
+## 5 — Prophet ML Mode
 
 > Prophet trains a time-series model on your cluster's Prometheus history and **learns your actual idle patterns** — handling bank holidays, quiet Fridays, and irregular demand automatically.
 
@@ -214,7 +300,7 @@ If training fails for any reason (network issue, insufficient data, missing pack
 
 ---
 
-## 5 — Full Cluster Deployment
+## 6 — Full Cluster Deployment (In-Cluster)
 
 ### Prerequisites
 
@@ -333,7 +419,7 @@ flowchart LR
 
 ---
 
-## 6 — Dry-Run (recommended before go-live)
+## 7 — Dry-Run (recommended before go-live)
 
 Run for a week before enabling live mutations to validate that scheduling decisions match your expectations:
 
@@ -358,7 +444,7 @@ Expected output:
 
 ---
 
-## 7 — Run the controller locally (demo mode)
+## 8 — Run the controller locally (demo mode)
 
 The controller also runs locally without any cluster — useful for testing schedule logic or Prophet tuning:
 

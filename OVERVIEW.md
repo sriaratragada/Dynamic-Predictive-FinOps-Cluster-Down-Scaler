@@ -79,14 +79,21 @@ flowchart TD
 
 ## System Architecture
 
+The system runs in two modes: **web service** (single Docker container outside the cluster) and **in-cluster** (controller + dashboard pods deployed via Helm or manifests).
+
 ```mermaid
 graph LR
   BROWSER["🌐 Browser\nOperator"] --> DASH
 
+  subgraph webservice["Web Service Mode (docker run)"]
+    DASH["⚡ Dashboard + Controller\nfinops-dashboard · :8090\nembedded ControllerRunner thread"]
+    TMPSTATE[("State\n/tmp/finops-web-state.json")]
+  end
+
   subgraph cluster["Kubernetes Cluster"]
-    subgraph sys["kube-system"]
+    subgraph sys["kube-system (in-cluster mode)"]
       CTRL["🐍 Controller Pod\nfinops-scaler · :8080/metrics"]
-      DASH["⚡ Dashboard Pod\nfinops-dashboard · :8090"]
+      DASH2["⚡ Dashboard Pod\nfinops-dashboard · :8090"]
       CM1[("ConfigMap\nfinops-scaler-state")]
       CM2[("ConfigMap\nfinops-savings-state")]
     end
@@ -101,10 +108,16 @@ graph LR
 
   CLOUD["☁️ Cloud Pricing API\nAWS · GCP"]
 
-  DASH --> CM1
-  DASH --> CM2
+  DASH -->|"kubeconfig → kubectl"| NODES
+  DASH -->|"kubeconfig → kubectl"| DEP
+  DASH --> TMPSTATE
   DASH --> PROM
   DASH -->|"live pricing"| CLOUD
+
+  DASH2 --> CM1
+  DASH2 --> CM2
+  DASH2 --> PROM
+  DASH2 -->|"live pricing"| CLOUD
   CTRL --> CM1
   CTRL --> PROM
   CTRL -->|"scale replicas"| DEP
@@ -211,83 +224,87 @@ flowchart LR
 
 ## Dashboard UI
 
+Apple-dark infrastructure control panel. Stark black background, electric-blue (`#2997ff`) accents, Outfit + JetBrains Mono typography, 2px border-radius geometry, physics-based page-load stagger.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  FinOps Down-Scaler                        Updated 14:32  ● Live  ⚙ Settings │
-├─────────────────────────────────────────────────────────────────────────────-┤
-│ 🧪 Running with synthetic demo data — no Kubernetes required.  Connect →  ×  │
-├───────────────────────┬──────────────────────────────────────────────────────┤
-│  CLUSTER STATUS       │  COST SAVINGS                                        │
-│                       │                                                      │
-│  ● IDLE               │          $12,450.32   all time                       │
-│                       │                                                      │
-│  Scaled down   Yes    │    $840.00  this week    $2,100.00  month            │
-│  Cordoned      2      │                                                      │
-│  Deployments   4      │    3 nodes currently cordoned                        │
-│                       │    AWS  m5.xlarge @ $0.192/hr  us-east-1            │
-│  [node-2] [node-3]    │    + $1.15 accruing                                 │
-│  [api-server ×3]      │                                                      │
-│  [worker ×5]          │                                                      │
-├───────────────────────┴──────────────────────────────────────────────────────┤
-│  CPU DEMAND vs CAPACITY                 [ 6h ][ 12h ][ 24h ][ 2d ][ 7d ]   │
+│  FINOPS/SCALER                  [● ACTIVE]  [⟳ CTRL RUNNING]  14:32:05 ● ⚙  │
+│  dynamic predictive down-scaler                                              │
+├──── cluster utilisation hairline (1px, green→amber→red, animated width) ────┤
+│ [DEMO] Running with synthetic data — no Kubernetes required.   Connect →  ×  │
+├──────────────┬──────────────┬──────────────┬──────────────────────────────-─┤
+│  $12,450     │  $2,100      │  $0.58/hr    │  2                              │
+│  TOTAL SAVED │  THIS MONTH  │  RATE / HR   │  NODES CORDONED                 │
+│  (green bar) │              │  (blue/accnt)│  (amber when >0)               │
+├──────────────┴──────────────┴──────────────┴─────────────────────────────-──┤
+│  NODE TOPOLOGY                                                               │
+│                                                                              │
+│  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐    │
+│  │ demo-node-1        │  │ demo-node-2  ░░░░  │  │ demo-node-3  ░░░░  │    │
+│  │ ─────────────────  │  │ ///////////////////│  │ ///////////////////│    │
+│  │ ████████▒▒ 52%     │  │ ///////////////////│  │ ///////////////////│    │
+│  │ 4.2 / 8.0 cores    │  │ 0.3 / 8.0 cores    │  │ 0.4 / 8.0 cores    │    │
+│  │ [READY]            │  │ [CORDONED]         │  │ [CORDONED]         │    │
+│  └────────────────────┘  └────────────────────┘  └────────────────────┘    │
+│   ^─ green CPU bar         ^─ amber 2px border     diagonal amber hatch     │
+│                              + diagonal hatch                                │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  CPU DEMAND vs CAPACITY             [ 6h ][ 12h ][ 24h ][ 2d ][ 7d ]       │
 │                                                                              │
 │  cores ▲                                                                     │
-│     16 │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓                                             │
-│     12 │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ ─ ─ ─ ─ capacity                      │
-│      8 │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓                             │
-│      0 └──────────────────────────────────────────────────────────► time    │
-│                      ▼ scale-down                  ▲ scale-up               │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  NODE DETAILS   (cluster: 4.9 / 24 cores · 20% utilised)                    │
-│                                                                              │
-│  Node     CPU Usage              Alloc    Util   Status      Savings         │
-│  node-1   ████████░░  4.2 cores  8 cores  52%   ● Ready      —             │
-│  node-2   ██░░░░░░░░  0.3 cores  8 cores   4%   ● Cordoned  $0.19/hr       │
-│  node-3   ██░░░░░░░░  0.4 cores  8 cores   5%   ● Cordoned  $0.19/hr       │
+│     16 │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓                                            │
+│     12 │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ ─ ─ ─ ─ capacity (dashed red)              │
+│      8 │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓                                  │
+│      0 └──────────────────────────────────────────────────────────► time   │
+│                      ▼ scale-down              ▲ scale-up                   │
+│  ← area: rgba(41,151,255,0.08), stroke: #2997ff, tick labels: JetBrains Mono│
 ├──────────────────────────────────────────────────────────────────────────────┤
 │  AUDIT LOG                                                  32 events        │
 │                                                                              │
-│  Node    Cordoned at         Released at          Duration  Saved            │
-│  node-3  May 22, 19:00       May 23, 07:00         12.0h    $2.30           │
-│  node-2  May 22, 19:00       May 23, 07:00         12.0h    $2.30           │
-│  node-3  May 19, 19:00       May 20, 07:00         12.0h    $2.30           │
-│  node-2  May 19, 19:00       May 20, 07:00         12.0h    $2.30           │
-│  …                                                                           │
+│  NODE          CORDONED AT          RELEASED AT          DURATION  SAVED    │
+│  demo-node-3   May 22, 19:00        May 23, 07:00          12.0h   $2.30    │
+│  demo-node-2   May 22, 19:00        May 23, 07:00          12.0h   $2.30    │
+│  …  (JetBrains Mono 11px, duration col in accent blue, saved col in green)  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ```
-                              ⚙ Settings drawer (slide-in)
+                        ⚙ Settings drawer (480px, slide-in from right)
 ┌─────────────────────────────────────────────────┐
 │ Configuration  ●                              ×  │  ← amber dot = unsaved changes
 ├─────────────────────────────────────────────────┤
-│ 🔌 CONNECTION                                    │
-│   Demo Mode              [  ●──]                │  ← toggle off → connect real cluster
+│ // CLUSTER                                       │
+│   Status  ● Connected  cluster.example.com       │
+│   Loop    ⟳ RUNNING               [ Stop ]      │
+│   ┌──────────────────────────────────────────┐  │
+│   │ apiVersion: v1                            │  │  ← JetBrains Mono textarea
+│   │ clusters: [{server: https://…}]           │  │     paste kubeconfig here
+│   └──────────────────────────────────────────┘  │
+│                      [ Validate & Connect ]      │
+├─────────────────────────────────────────────────┤
+│ // CONN                                          │
+│   Demo Mode              [  ●──]                │
 │   Prometheus URL  [http://prometheus:9090    ]  │
 ├─────────────────────────────────────────────────┤
-│ ☁️ CLOUD & PRICING                               │
-│   Provider   [ Manual ][ AWS ][ GCP ]           │  ← segmented control
+│ // CLOUD                                         │
+│   Provider   [ Manual ][ AWS ][ GCP ]           │
 │   Instance   [m5.xlarge            ]            │
-│   Region     [us-east-1            ]            │
 │   $/hr       [0.192               ]            │
 ├─────────────────────────────────────────────────┤
-│ 🗓 SCHEDULE                      controller ref  │
+│ // SCHED                                         │
 │   Hours  [07:00] to [19:00]                     │
-│   Days   [Mo][Tu][We][Th][Fr] Sa  Su            │  ← pill buttons
+│   Days   [Mo][Tu][We][Th][Fr] Sa  Su            │
 │   Zone   [America/New_York        ]            │
 ├─────────────────────────────────────────────────┤
-│ 🔮 PREDICTION                                    │
+│ // PRED                                          │
 │   Metric Override         [●──  ]               │
-│   Prophet ML Forecasting  [  ──●]               │  ← toggle on reveals sub-fields
-│  ┌──────────────────────────────────────────┐   │
-│  │ Training weeks  [4]                       │   │
-│  │ Idle threshold  [0.5 cores]               │   │
-│  │ Retrain every   [6 hours]                 │   │
-│  └──────────────────────────────────────────┘   │
+│   Prophet ML Forecasting  [  ──●]               │
+│  ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐ │
+│    Training weeks [4]  Idle threshold [0.5]    │ │
+│  └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘ │
 ├─────────────────────────────────────────────────┤
-│ 📊 DASHBOARD                                     │
-│   Poll interval  [30 seconds]                   │
-│   Util threshold [0.10]                         │
+│ // UI                                            │
+│   Poll interval  [30 s]  Util threshold [10%]   │
 ├─────────────────────────────────────────────────┤
 │ [ Discard ]                 [ Save Changes ]    │
 └─────────────────────────────────────────────────┘
@@ -477,17 +494,23 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | | `webhook.py` | `WebhookNotifier` — Slack-compatible HTTP POST on scale-down/up; fire-and-forget, errors swallowed |
 | | `leader_election.py` | `LeaderElector` — `coordination.k8s.io/v1` Lease; blocks non-leaders, steals expired leases |
 | **Controller demo** | `demo_stub.py` | DemoPrometheusClient · DemoStateStore · DemoCoreV1Api · DemoAppsV1Api · DemoAutoscalingV2Api · DemoCoordinationV1Api — synthetic data, no K8s |
-| **Dashboard Backend** | FastAPI + uvicorn | REST API (8 routes) + React static file serving |
+| **Dashboard Backend** | FastAPI + uvicorn | REST API (11 routes) + React static file serving |
+| | `controller_runner.py` | `ControllerRunner` — daemon thread with embedded scale/cordon logic; `POST /api/connect` starts it with a pasted kubeconfig; state persisted to `/tmp/finops-web-state.json` |
 | | `auth.py` | Per-request `Authorization: Bearer <token>` middleware; reads `API_TOKEN` each call |
 | | `config_store.py` | Mutable `DashboardConfig` — hot-patchable via `PATCH /api/config`, no restart |
-| | `demo_stub.py` | DemoK8sReader + synthetic Prometheus responses for all five endpoints |
+| | `demo_stub.py` | DemoK8sReader + synthetic Prometheus responses for all endpoints |
 | | `boto3` | AWS EC2 Pricing API (On-Demand Linux rates) |
 | | `google-cloud-billing` | GCP Cloud Billing Catalog SKU lookup |
+| | `pyyaml` | Kubeconfig YAML parsing in web service mode |
 | | `asyncio` | Background savings-tracker coroutine |
-| **Dashboard Frontend** | React 18 + TypeScript | Single-page application |
-| | Recharts | ComposedChart — area (CPU used) + line (capacity) + event markers |
-| | `SettingsPanel.tsx` | Slide-in drawer — 5 sections, save via `PATCH /api/config`, toast feedback |
-| | `AuditLog.tsx` | Reverse-chronological cordon event table — node, timestamps, duration, savings |
+| **Dashboard Frontend** | React 18 + TypeScript | Apple-dark infrastructure control panel SPA |
+| | Outfit + JetBrains Mono | Google Fonts — Outfit 800 for KPI numerics; JetBrains Mono for node names, timestamps, monospaced inputs |
+| | `MetricsBar.tsx` | 4-tile animated KPI bar — Total Saved · This Month · Rate/hr · Nodes Cordoned |
+| | `NodeTopology.tsx` | SVG node grid — per-node CPU bars, diagonal amber hatch for cordoned nodes, hover tooltip, responsive column layout via ResizeObserver (1–5 cols) |
+| | `useAnimatedValue.ts` | rAF-based cubic easing hook — smooth number transitions for KPI tiles |
+| | Recharts | ComposedChart — area (CPU used, `#2997ff`) + capacity line (dashed red) + event markers |
+| | `SettingsPanel.tsx` | Slide-in drawer — 6 sections (// CLUSTER · // CONN · // CLOUD · // SCHED · // PRED · // UI); kubeconfig textarea + connect flow |
+| | `AuditLog.tsx` | Reverse-chronological cordon event table — JetBrains Mono cells, accent blue duration, green savings |
 | | `DemoBanner.tsx` | First-run hint — opens Settings, dismissible per-session |
 | **Pre-Warm Engine** | `prewarm.py` | `PrewarmController` — warm cache, in-flight dedup, async Knative ping |
 | | `POST /api/prewarm` | Signal endpoint — accepts login/hover/focus events, fires pre-warm if cold |
@@ -601,26 +624,30 @@ DynaPredictingDownScaler/
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs for DEMO_MODE
 ├── dashboard/
 │   ├── backend/
-│   │   ├── app.py             # FastAPI · 8 routes (config, events, status, capacity, history, savings, prewarm, health)
-│   │   ├── auth.py            # Bearer-token middleware (API_TOKEN)
-│   │   ├── config_store.py    # Hot-patchable DashboardConfig singleton
-│   │   ├── demo_stub.py       # DemoK8sReader + synthetic Prometheus responses
-│   │   ├── prewarm.py         # PrewarmController — warm cache + Knative ping (optional)
-│   │   ├── k8s_client.py      # Read state + savings ConfigMaps · list nodes
-│   │   ├── savings_tracker.py # Async cordon-transition cost accumulator
-│   │   └── pricing.py         # AWS / GCP / manual pricing with 1-hour cache
+│   │   ├── app.py              # FastAPI · 11 routes (connect, controller, config, events, status, capacity, history, savings, prewarm, health)
+│   │   ├── auth.py             # Bearer-token middleware (API_TOKEN)
+│   │   ├── config_store.py     # Hot-patchable DashboardConfig singleton
+│   │   ├── controller_runner.py# ControllerRunner daemon thread + RunnerStatus
+│   │   ├── demo_stub.py        # DemoK8sReader + synthetic Prometheus responses
+│   │   ├── prewarm.py          # PrewarmController — warm cache + Knative ping (optional)
+│   │   ├── k8s_client.py       # Read state + savings ConfigMaps · list nodes
+│   │   ├── savings_tracker.py  # Async cordon-transition cost accumulator
+│   │   └── pricing.py          # AWS / GCP / manual pricing with 1-hour cache
 │   ├── frontend/src/
-│   │   ├── App.tsx                     # Polling · settings state · demo banner
+│   │   ├── App.tsx                     # Polling · layout · cluster-util hairline vars
 │   │   ├── api.ts                      # Typed fetch helpers + all interface types
+│   │   ├── hooks/
+│   │   │   └── useAnimatedValue.ts     # rAF cubic easing for animated KPI numbers
 │   │   └── components/
+│   │       ├── MetricsBar.tsx          # 4-tile KPI bar (saved/month/rate/cordoned)
+│   │       ├── NodeTopology.tsx        # SVG node grid with CPU bars + cordon hatch
+│   │       ├── DemandCapacityChart.tsx # Recharts ComposedChart + event markers
 │   │       ├── AuditLog.tsx            # Cordon event history table (reverse-chron)
 │   │       ├── DemoBanner.tsx          # First-run "demo mode" hint → opens Settings
-│   │       ├── SettingsPanel.tsx       # Slide-in config drawer (5 sections)
+│   │       ├── SettingsPanel.tsx       # Slide-in config drawer (6 sections incl. Cluster)
 │   │       ├── Toggle.tsx              # Animated accessible toggle switch
-│   │       ├── StatusPanel.tsx         # Mode badge · node/deployment chips
-│   │       ├── DollarsSavedPanel.tsx   # Animated $ counter · provider badge
-│   │       ├── DemandCapacityChart.tsx # Recharts ComposedChart + event markers
-│   │       └── NodeTable.tsx           # Per-node CPU bars · savings column
+│   │       ├── StatusPanel.tsx         # Mode badge · node/deployment chips (kept, not rendered)
+│   │       └── DollarsSavedPanel.tsx   # Animated $ counter · provider badge (kept, not rendered)
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)

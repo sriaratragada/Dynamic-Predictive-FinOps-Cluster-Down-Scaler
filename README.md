@@ -75,6 +75,7 @@ No YAML or environment variable editing required. Click **⚙ Settings** in the 
 
 | Section | What you set |
 |:--------|:-------------|
+| **Cluster** | Paste kubeconfig · start / stop embedded controller loop · connection status |
 | **Connection** | Toggle demo mode · Prometheus URL |
 | **Cloud & Pricing** | Provider (Manual / AWS / GCP) · instance type · region · hourly rate |
 | **Schedule** | Business hours · active days · timezone · pre-warm minutes |
@@ -89,9 +90,10 @@ Changes apply immediately — no restart needed. For Docker and Helm deployments
 
 | | No cluster | Real cluster | Real cluster + ML |
 |:--|:--:|:--:|:--:|
-| **Docker** (`docker compose up`) | ✅ demo data | ✅ with `.env` | ✅ |
-| **Helm** (`helm install`) | — | ✅ recommended | ✅ |
-| **Raw manifests** (`kubectl apply`) | — | ✅ | ✅ |
+| **Docker demo** (`docker compose up`) | ✅ synthetic data | — | — |
+| **Web service** (`docker run` + paste kubeconfig) | — | ✅ no in-cluster install | ✅ |
+| **In-cluster — Helm** (`helm install`) | — | ✅ recommended | ✅ |
+| **In-cluster — manifests** (`kubectl apply`) | — | ✅ | ✅ |
 
 See [SETUP.md](SETUP.md) for step-by-step instructions for every path.
 
@@ -131,26 +133,30 @@ DynaPredictingDownScaler/
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs (DEMO_MODE)
 ├── dashboard/
 │   ├── backend/
-│   │   ├── app.py             # FastAPI — 8 routes + React SPA serving
-│   │   ├── auth.py            # Bearer-token middleware (API_TOKEN)
-│   │   ├── config_store.py    # Hot-patchable DashboardConfig (GET/PATCH /api/config)
-│   │   ├── demo_stub.py       # DemoK8sReader + synthetic Prometheus responses
-│   │   ├── prewarm.py         # PrewarmController — warm cache + async Knative ping
-│   │   ├── k8s_client.py      # Read state + savings ConfigMaps · list nodes
-│   │   ├── savings_tracker.py # Async cordon-transition cost accumulator
-│   │   └── pricing.py         # AWS / GCP / manual pricing with 1-hour cache
+│   │   ├── app.py              # FastAPI — 11 routes + React SPA serving
+│   │   ├── auth.py             # Bearer-token middleware (API_TOKEN)
+│   │   ├── config_store.py     # Hot-patchable DashboardConfig (GET/PATCH /api/config)
+│   │   ├── controller_runner.py# Embedded controller loop (ControllerRunner daemon thread)
+│   │   ├── demo_stub.py        # DemoK8sReader + synthetic Prometheus responses
+│   │   ├── prewarm.py          # PrewarmController — warm cache + async Knative ping
+│   │   ├── k8s_client.py       # Read state + savings ConfigMaps · list nodes
+│   │   ├── savings_tracker.py  # Async cordon-transition cost accumulator
+│   │   └── pricing.py          # AWS / GCP / manual pricing with 1-hour cache
 │   ├── frontend/src/
-│   │   ├── App.tsx                     # Polling · settings state · demo banner
-│   │   ├── api.ts                      # Typed fetch helpers + ConfigData interface
+│   │   ├── App.tsx                     # Polling · settings state · layout
+│   │   ├── api.ts                      # Typed fetch helpers + all interface types
+│   │   ├── hooks/
+│   │   │   └── useAnimatedValue.ts     # rAF-based easing hook for animated KPI numbers
 │   │   └── components/
-│   │       ├── AuditLog.tsx            # Cordon event history table (reverse-chron)
-│   │       ├── DemoBanner.tsx          # "Running in demo mode" — opens Settings
-│   │       ├── SettingsPanel.tsx       # Slide-in config drawer (5 sections)
-│   │       ├── Toggle.tsx              # Animated accessible toggle switch
-│   │       ├── StatusPanel.tsx         # Mode badge · node/deployment chips
-│   │       ├── DollarsSavedPanel.tsx   # Animated $ counter · provider badge
+│   │       ├── MetricsBar.tsx          # 4-tile animated KPI bar (saved/month/rate/cordoned)
+│   │       ├── NodeTopology.tsx        # SVG node grid — CPU bars, cordon hatch, tooltips
 │   │       ├── DemandCapacityChart.tsx # Recharts ComposedChart + event markers
-│   │       └── NodeTable.tsx           # Per-node CPU bars · savings column
+│   │       ├── AuditLog.tsx            # Cordon event history table (reverse-chron)
+│   │       ├── SettingsPanel.tsx       # Slide-in config drawer (6 sections incl. Cluster)
+│   │       ├── DemoBanner.tsx          # "Running in demo mode" — opens Settings
+│   │       ├── Toggle.tsx              # Animated accessible toggle switch
+│   │       ├── StatusPanel.tsx         # Mode badge · node/deployment chips (kept, not rendered)
+│   │       └── DollarsSavedPanel.tsx   # Animated $ counter · provider badge (kept, not rendered)
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)
@@ -173,11 +179,12 @@ DynaPredictingDownScaler/
 ## Verify it's working
 
 ```bash
-curl http://localhost:8090/health        # {"status":"ok"}
-curl http://localhost:8090/api/status    # cluster state JSON
-curl http://localhost:8090/api/savings   # cost savings JSON
-curl http://localhost:8090/api/events    # cordon/uncordon audit log
-curl http://localhost:8090/api/config    # live configuration
+curl http://localhost:8090/health               # {"status":"ok"}
+curl http://localhost:8090/api/status           # cluster state JSON
+curl http://localhost:8090/api/savings          # cost savings JSON
+curl http://localhost:8090/api/events           # cordon/uncordon audit log
+curl http://localhost:8090/api/config           # live configuration
+curl http://localhost:8090/api/controller       # embedded controller loop status
 ```
 
 **Label individual workloads** for scale-down eligibility (full cluster mode):
