@@ -24,10 +24,20 @@ def _parse_cpu(cpu_str: str) -> float:
 
 
 class K8sReader:
-    def __init__(self):
-        _load()
-        self._core = client.CoreV1Api()
-        self._apps = client.AppsV1Api()
+    def __init__(self, core_v1=None, apps_v1=None):
+        """
+        Initialise the reader.  When *core_v1* and *apps_v1* are provided
+        (web-service connect flow) the existing global kubeconfig is assumed
+        already loaded — no additional config loading is performed.
+        Otherwise the standard in-cluster → kube_config fallback is used.
+        """
+        if core_v1 is not None and apps_v1 is not None:
+            self._core = core_v1
+            self._apps = apps_v1
+        else:
+            _load()
+            self._core = client.CoreV1Api()
+            self._apps = client.AppsV1Api()
         self._state_name = os.environ.get("STATE_CONFIGMAP_NAME", "finops-scaler-state")
         self._state_ns = os.environ.get("STATE_CONFIGMAP_NS", "kube-system")
         self._savings_name = os.environ.get("SAVINGS_CONFIGMAP_NAME", "finops-savings-state")

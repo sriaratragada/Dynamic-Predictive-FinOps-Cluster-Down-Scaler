@@ -76,6 +76,15 @@ export interface ConfigData {
   enable_prewarm: boolean
 }
 
+export interface ControllerStatus {
+  running: boolean
+  connected: boolean
+  cluster_host: string
+  last_tick: string | null   // ISO-8601 or null
+  last_action: string
+  error: string | null
+}
+
 export interface ScaleEvent {
   node: string
   start: string    // ISO-8601 UTC
@@ -101,6 +110,27 @@ export const fetchHistory  = (hours = 24) => get<HistoryData>(`/api/history?hour
 export const fetchSavings  = ()            => get<SavingsData>('/api/savings')
 export const fetchConfig   = ()            => get<ConfigData>('/api/config')
 export const fetchEvents   = ()            => get<EventsData>('/api/events')
+
+export const fetchControllerStatus = () => get<ControllerStatus>('/api/controller')
+
+export async function connectCluster(kubeconfig: string): Promise<ControllerStatus> {
+  const r = await fetch('/api/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kubeconfig }),
+  })
+  if (!r.ok) {
+    const payload = await r.json().catch(() => ({ detail: r.statusText }))
+    throw new Error(payload.detail || r.statusText)
+  }
+  return r.json()
+}
+
+export async function stopController(): Promise<ControllerStatus> {
+  const r = await fetch('/api/controller/stop', { method: 'POST' })
+  if (!r.ok) throw new Error(r.statusText)
+  return r.json()
+}
 
 export async function saveConfig(updates: Partial<ConfigData>): Promise<ConfigData> {
   const r = await fetch('/api/config', {

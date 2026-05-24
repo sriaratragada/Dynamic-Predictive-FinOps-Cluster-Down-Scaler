@@ -785,6 +785,12 @@ body {
 
 .settings-input:focus { outline: none; border-color: var(--accent); }
 
+textarea.settings-input {
+  resize: vertical;
+  min-height: 100px;
+  line-height: 1.5;
+}
+
 .settings-input:disabled { opacity: 0.3; cursor: not-allowed; }
 
 .settings-input[type="number"]::-webkit-inner-spin-button,

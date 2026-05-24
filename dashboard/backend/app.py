@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config_store, pricing
 from .auth import require_token
+from .controller_runner import get_runner as _get_runner
 from .k8s_client import K8sReader
 from .prewarm import get_controller as _get_prewarm
 from .savings_tracker import SavingsTracker
@@ -365,6 +366,76 @@ async def api_savings():
         "instance_type": info["instance_type"],
         "region": info["region"],
     }
+
+
+# ------------------------------------------------------------------
+# Web-service: cluster connect / controller management
+# ------------------------------------------------------------------
+
+@app.post("/api/connect")
+async def api_connect(request: Request, _: None = Depends(require_token)):
+    """
+    Accept a kubeconfig YAML string, validate it by listing nodes, then
+    start the embedded controller loop.  On success the K8sReader and
+    SavingsTracker are re-initialised against the new cluster.
+
+    Body (JSON):
+        kubeconfig  str  Full kubeconfig YAML (same as ~/.kube/config)
+
+    Returns the controller status object.
+    """
+    global _k8s, _tracker
+
+    body = await request.json()
+    kubeconfig_str: str = (body.get("kubeconfig") or "").strip()
+    if not kubeconfig_str:
+        from fastapi import HTTPException  # noqa: PLC0415
+        raise HTTPException(status_code=422, detail="kubeconfig is required")
+
+    runner = _get_runner()
+
+    # connect() is synchronous (blocking I/O) — run in thread pool
+    loop = asyncio.get_event_loop()
+    try:
+        core_v1, apps_v1 = await loop.run_in_executor(
+            None, runner.connect, kubeconfig_str
+        )
+    except Exception as exc:
+        from fastapi import HTTPException  # noqa: PLC0415
+        raise HTTPException(status_code=400, detail=f"Cluster unreachable: {exc}") from exc
+
+    # Re-initialise the dashboard's K8s reader with the connected clients
+    _k8s = K8sReader(core_v1=core_v1, apps_v1=apps_v1)
+
+    # Restart the savings tracker
+    if _tracker is not None:
+        _tracker._stop = True
+    _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
+    asyncio.create_task(_tracker.start())
+
+    # Switch out of demo mode so real routes are used
+    config_store.patch({"demo_mode": False})
+
+    # Start the embedded controller loop
+    await loop.run_in_executor(None, lambda: runner.start(60))
+
+    logger.info("Web-service mode: controller started, K8sReader re-initialised")
+    return runner.status().as_dict()
+
+
+@app.get("/api/controller")
+async def api_controller_status():
+    """Return the embedded controller's current status."""
+    return _get_runner().status().as_dict()
+
+
+@app.post("/api/controller/stop")
+async def api_controller_stop(_: None = Depends(require_token)):
+    """Stop the embedded controller loop (does not disconnect from the cluster)."""
+    runner = _get_runner()
+    loop   = asyncio.get_event_loop()
+    await loop.run_in_executor(None, runner.stop)
+    return runner.status().as_dict()
 
 
 # ------------------------------------------------------------------

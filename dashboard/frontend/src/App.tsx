@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig, fetchEvents } from './api'
-import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData, EventsData } from './api'
+import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig, fetchEvents, fetchControllerStatus } from './api'
+import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData, EventsData, ControllerStatus } from './api'
 import MetricsBar      from './components/MetricsBar'
 import NodeTopology    from './components/NodeTopology'
 import DemandCapacityChart from './components/DemandCapacityChart'
@@ -20,7 +20,8 @@ export default function App() {
   const [error,    setError]    = useState<string | null>(null)
   const [historyHours,  setHistoryHours]  = useState(24)
   const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null)
-  const [settingsOpen,  setSettingsOpen]  = useState(false)
+  const [settingsOpen,       setSettingsOpen]       = useState(false)
+  const [controllerStatus,   setControllerStatus]   = useState<ControllerStatus | null>(null)
 
   const pollInterval = config ? config.poll_interval_seconds * 1000 : DEFAULT_POLL_MS
 
@@ -41,6 +42,8 @@ export default function App() {
       setSavings(sv); setEvents(ev)
       setError(null)
       setLastUpdated(new Date())
+      // Poll controller status alongside cluster data
+      fetchControllerStatus().then(setControllerStatus).catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch data')
     }
@@ -86,6 +89,18 @@ export default function App() {
           <div className={`header-badge header-badge--${modeCls}`}>
             <span style={{ fontSize: 7 }}>●</span>
             {modeLabel}
+          </div>
+        )}
+
+        {/* Controller loop badge — only when connected via web-service mode */}
+        {controllerStatus?.connected && (
+          <div
+            className={`header-badge header-badge--${controllerStatus.running ? 'active' : 'idle'}`}
+            title={controllerStatus.cluster_host}
+            style={{ cursor: 'default' }}
+          >
+            <span style={{ fontSize: 7 }}>{controllerStatus.running ? '⟳' : '■'}</span>
+            CTRL {controllerStatus.running ? 'RUNNING' : 'STOPPED'}
           </div>
         )}
 
@@ -143,6 +158,8 @@ export default function App() {
           config={config}
           onClose={() => setSettingsOpen(false)}
           onSaved={handleConfigSaved}
+          controllerStatus={controllerStatus}
+          onControllerChange={s => { setControllerStatus(s); refresh() }}
         />
       )}
     </div>
