@@ -155,6 +155,36 @@ body {
   color: var(--text);
 }
 
+/* Connect Cluster button — prominent when not yet connected */
+.settings-btn--connect {
+  border-color: rgba(41,151,255,0.4);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.settings-btn--connect:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Connected state — subtle indicator */
+.settings-btn--connected {
+  border-color: rgba(48,209,88,0.3);
+  color: var(--green);
+  background: var(--green-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-btn--connected:hover {
+  border-color: rgba(48,209,88,0.5);
+  background: rgba(48,209,88,0.18);
+  color: var(--green);
+}
+
 /* ── Page-load reveal ────────────────────────────────────────── */
 [data-reveal] {
   opacity: 0;
@@ -1279,6 +1309,64 @@ body {
   border-color: var(--accent);
 }
 
+/* ── Connect Panel — connected status block ──────────────────── */
+.connect-panel-status {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.connect-panel-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connect-panel-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.connect-panel-dot--running {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(48,209,88,0.5);
+  animation: livePulse 2.5s ease-in-out infinite;
+}
+.connect-panel-dot--stopped { background: var(--text-3); }
+
+.connect-panel-status-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.connect-panel-status-host {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+
+.connect-panel-last-action {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.connect-panel-last-action span { color: var(--text-2); }
+
+.connect-panel-reconnect-hint {
+  font-family: 'Outfit', sans-serif;
+  font-size: 11px;
+  color: var(--text-3);
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── Connect Card — day pills ────────────────────────────────── */
 .connect-day-pills {
   display: flex;
@@ -1489,6 +1577,9 @@ body {
   from { transform: translateX(100%); }
   to   { transform: translateX(0); }
 }
+
+/* Wide variant for Connect panel */
+.drawer--wide { width: 560px; }
 
 .drawer-header {
   display: flex;

@@ -2,11 +2,12 @@ import { useState } from 'react'
 
 interface Props {
   onOpenSettings: () => void
+  onOpenConnect:  () => void
 }
 
 const DISMISS_KEY = 'finops-demo-banner-dismissed'
 
-export default function DemoBanner({ onOpenSettings }: Props) {
+export default function DemoBanner({ onOpenSettings, onOpenConnect }: Props) {
   const [visible, setVisible] = useState(
     () => sessionStorage.getItem(DISMISS_KEY) !== '1'
   )
@@ -25,7 +26,7 @@ export default function DemoBanner({ onOpenSettings }: Props) {
         Running with <strong>synthetic demo data</strong> — no Kubernetes or
         Prometheus required.
       </span>
-      <button className="demo-banner-cta" onClick={onOpenSettings}>
+      <button className="demo-banner-cta" onClick={onOpenConnect}>
         Connect your cluster →
       </button>
       <button

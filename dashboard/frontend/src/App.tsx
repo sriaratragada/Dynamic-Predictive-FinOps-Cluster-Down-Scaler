@@ -7,7 +7,7 @@ import DemandCapacityChart from './components/DemandCapacityChart'
 import SettingsPanel       from './components/SettingsPanel'
 import DemoBanner          from './components/DemoBanner'
 import AuditLog            from './components/AuditLog'
-import ConnectCard         from './components/ConnectCard'
+import ConnectPanel        from './components/ConnectPanel'
 import DashboardConfig     from './components/DashboardConfig'
 
 const DEFAULT_CONFIG: ConfigData = {
@@ -45,6 +45,7 @@ export default function App() {
   const [historyHours,  setHistoryHours]  = useState(24)
   const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null)
   const [settingsOpen,       setSettingsOpen]       = useState(false)
+  const [connectOpen,        setConnectOpen]        = useState(false)
   const [controllerStatus,   setControllerStatus]   = useState<ControllerStatus | null>(null)
 
   const pollInterval = config.poll_interval_seconds * 1000
@@ -135,6 +136,18 @@ export default function App() {
             </span>
           )}
           <div className="live-dot" />
+          {/* Connect button — prominent when not connected, subtle when connected */}
+          {!config.demo_mode && (
+            <button
+              className={`settings-btn ${controllerStatus?.connected ? 'settings-btn--connected' : 'settings-btn--connect'}`}
+              onClick={() => setConnectOpen(true)}
+              aria-label="Connect cluster"
+            >
+              {controllerStatus?.connected
+                ? `● ${controllerStatus.cluster_host || 'Connected'}`
+                : '⊕ Connect Cluster'}
+            </button>
+          )}
           <button
             className="settings-btn"
             onClick={() => setSettingsOpen(true)}
@@ -147,20 +160,14 @@ export default function App() {
 
       {/* ── Demo Banner ── */}
       {config.demo_mode && (
-        <DemoBanner onOpenSettings={() => setSettingsOpen(true)} />
+        <DemoBanner
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenConnect={() => setConnectOpen(true)}
+        />
       )}
 
       {/* ── Error ── */}
       {error && <div className="error-banner">{error}</div>}
-
-      {/* ── Connect Card (shown whenever not yet connected to a real cluster) ── */}
-      {!controllerStatus?.connected && (
-        <ConnectCard
-          config={config}
-          onConnected={s => { setControllerStatus(s); refresh() }}
-          onConfigChange={setConfig}
-        />
-      )}
 
       {/* ── Metrics Bar ── */}
       <MetricsBar savings={savings} status={status} />
@@ -199,6 +206,18 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onSaved={handleConfigSaved}
           controllerStatus={controllerStatus}
+          onControllerChange={s => { setControllerStatus(s); refresh() }}
+        />
+      )}
+
+      {/* ── Connect Panel ── */}
+      {connectOpen && (
+        <ConnectPanel
+          config={config}
+          controllerStatus={controllerStatus}
+          onClose={() => setConnectOpen(false)}
+          onConnected={s => { setControllerStatus(s); setConnectOpen(false); refresh() }}
+          onConfigChange={setConfig}
           onControllerChange={s => { setControllerStatus(s); refresh() }}
         />
       )}
