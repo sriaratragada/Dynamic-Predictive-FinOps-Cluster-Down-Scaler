@@ -8,7 +8,7 @@ import SettingsPanel       from './components/SettingsPanel'
 import DemoBanner          from './components/DemoBanner'
 import AuditLog            from './components/AuditLog'
 import ConnectCard         from './components/ConnectCard'
-import ScheduleStrip       from './components/ScheduleStrip'
+import DashboardConfig     from './components/DashboardConfig'
 
 const DEFAULT_CONFIG: ConfigData = {
   prometheus_url:               'http://prometheus:9090',
@@ -165,11 +165,11 @@ export default function App() {
       {/* ── Metrics Bar ── */}
       <MetricsBar savings={savings} status={status} />
 
-      {/* ── Schedule Strip ── */}
-      <ScheduleStrip
+      {/* ── Dashboard Config (schedule · cloud · prediction) ── */}
+      <DashboardConfig
         config={config}
         status={status}
-        onEdit={() => setSettingsOpen(true)}
+        onSaved={handleConfigSaved}
       />
 
       {/* ── Node Topology ── */}
