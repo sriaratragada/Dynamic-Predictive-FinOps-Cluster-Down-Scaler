@@ -20,7 +20,7 @@ export default function DemoBanner({ onOpenSettings }: Props) {
 
   return (
     <div className="demo-banner">
-      <span className="demo-banner-icon">🧪</span>
+      <span className="demo-banner-tag">DEMO</span>
       <span className="demo-banner-text">
         Running with <strong>synthetic demo data</strong> — no Kubernetes or
         Prometheus required.

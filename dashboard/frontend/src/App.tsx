@@ -1,13 +1,12 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig, fetchEvents } from './api'
 import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData, EventsData } from './api'
-import StatusPanel from './components/StatusPanel'
-import DollarsSavedPanel from './components/DollarsSavedPanel'
+import MetricsBar      from './components/MetricsBar'
+import NodeTopology    from './components/NodeTopology'
 import DemandCapacityChart from './components/DemandCapacityChart'
-import NodeTable from './components/NodeTable'
-import SettingsPanel from './components/SettingsPanel'
-import DemoBanner from './components/DemoBanner'
-import AuditLog from './components/AuditLog'
+import SettingsPanel   from './components/SettingsPanel'
+import DemoBanner      from './components/DemoBanner'
+import AuditLog        from './components/AuditLog'
 
 const DEFAULT_POLL_MS = 30_000
 
@@ -19,13 +18,12 @@ export default function App() {
   const [events,   setEvents]   = useState<EventsData | null>(null)
   const [config,   setConfig]   = useState<ConfigData | null>(null)
   const [error,    setError]    = useState<string | null>(null)
-  const [historyHours, setHistoryHours] = useState(24)
-  const [lastUpdated,  setLastUpdated]  = useState<Date | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [historyHours,  setHistoryHours]  = useState(24)
+  const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null)
+  const [settingsOpen,  setSettingsOpen]  = useState(false)
 
   const pollInterval = config ? config.poll_interval_seconds * 1000 : DEFAULT_POLL_MS
 
-  // Load config once on mount
   useEffect(() => {
     fetchConfig().then(setConfig).catch(() => {/* use defaults */})
   }, [])
@@ -39,11 +37,8 @@ export default function App() {
         fetchSavings(),
         fetchEvents(),
       ])
-      setStatus(s)
-      setCapacity(c)
-      setHistory(h)
-      setSavings(sv)
-      setEvents(ev)
+      setStatus(s); setCapacity(c); setHistory(h)
+      setSavings(sv); setEvents(ev)
       setError(null)
       setLastUpdated(new Date())
     } catch (e) {
@@ -57,31 +52,50 @@ export default function App() {
     return () => clearInterval(id)
   }, [refresh, pollInterval])
 
-  const handleHoursChange = (h: number) => {
-    setHistoryHours(h)
-    refresh(h)
-  }
+  const handleHoursChange = (h: number) => { setHistoryHours(h); refresh(h) }
 
-  const handleConfigSaved = (cfg: ConfigData) => {
-    setConfig(cfg)
-    // Re-fetch data immediately so savings / provider info reflects the change
-    refresh()
-  }
+  const handleConfigSaved = (cfg: ConfigData) => { setConfig(cfg); refresh() }
 
-  const mode = status
-    ? status.scaled_down ? 'idle' : 'active'
-    : 'active'
+  // Cluster utilisation for the header hairline
+  const clusterUtil  = capacity?.cluster_utilisation_pct ?? 0
+  const clusterColor = clusterUtil >= 80 ? 'var(--red)' : clusterUtil >= 50 ? 'var(--amber)' : 'var(--green)'
+
+  // Header mode badge
+  const scaled = status?.scaled_down ?? false
+  const modeLabel = scaled ? 'HIBERNATING' : 'ACTIVE'
+  const modeCls   = scaled ? 'idle' : 'active'
 
   return (
-    <div className="app">
-      <header className="header">
-        <h1>FinOps Down-Scaler</h1>
+    <div
+      className="app"
+      style={{
+        ['--cluster-util'       as string]: `${clusterUtil}%`,
+        ['--cluster-util-color' as string]: clusterColor,
+      }}
+    >
+      {/* ── Header ── */}
+      <header className="header" data-reveal="0">
+        <div className="header-logo">
+          <div className="header-logo-mark">
+            FINOPS<span>/</span>SCALER
+          </div>
+          <div className="header-logo-sub">dynamic predictive down-scaler</div>
+        </div>
+
+        {status && (
+          <div className={`header-badge header-badge--${modeCls}`}>
+            <span style={{ fontSize: 7 }}>●</span>
+            {modeLabel}
+          </div>
+        )}
+
         <div className="header-meta">
           {lastUpdated && (
-            <span>Updated {lastUpdated.toLocaleTimeString()}</span>
+            <span className="header-time">
+              {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
           )}
           <div className="live-dot" />
-          <span>Live</span>
           <button
             className="settings-btn"
             onClick={() => setSettingsOpen(true)}
@@ -92,34 +106,38 @@ export default function App() {
         </div>
       </header>
 
+      {/* ── Demo Banner ── */}
       {config?.demo_mode && (
         <DemoBanner onOpenSettings={() => setSettingsOpen(true)} />
       )}
 
+      {/* ── Error ── */}
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="grid">
-        <div className="status-panel">
-          <StatusPanel status={status} mode={mode} />
-        </div>
-        <div className="savings-panel">
-          <DollarsSavedPanel savings={savings} />
-        </div>
-        <div className="chart-panel">
-          <DemandCapacityChart
-            history={history}
-            hours={historyHours}
-            onHoursChange={handleHoursChange}
-          />
-        </div>
-        <div className="table-panel">
-          <NodeTable capacity={capacity} savings={savings} />
-        </div>
-        <div className="audit-panel-wrapper">
-          <AuditLog events={events} />
-        </div>
+      {/* ── Metrics Bar ── */}
+      <MetricsBar savings={savings} status={status} />
+
+      {/* ── Node Topology ── */}
+      <div data-reveal="2">
+        <div className="section-label">Node Topology</div>
+        <NodeTopology capacity={capacity} status={status} savings={savings} />
       </div>
 
+      {/* ── Demand / Capacity Chart ── */}
+      <div data-reveal="3" style={{ marginTop: 20 }}>
+        <DemandCapacityChart
+          history={history}
+          hours={historyHours}
+          onHoursChange={handleHoursChange}
+        />
+      </div>
+
+      {/* ── Audit Log ── */}
+      <div data-reveal="4" style={{ marginTop: 20 }}>
+        <AuditLog events={events} />
+      </div>
+
+      {/* ── Settings Drawer ── */}
       {settingsOpen && config && (
         <SettingsPanel
           config={config}

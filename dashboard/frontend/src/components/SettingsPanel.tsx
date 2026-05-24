@@ -86,7 +86,7 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
           {/* Connection */}
           <section className="settings-section">
             <div className="settings-section-header">
-              <span className="settings-section-icon">🔌</span>
+              <span className="settings-section-icon">// CONN</span>
               Connection
             </div>
 
@@ -107,6 +107,7 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
                 disabled={draft.demo_mode}
                 onChange={e => set('prometheus_url', e.target.value)}
                 placeholder="http://prometheus:9090"
+                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
               />
               {draft.demo_mode && (
                 <div className="settings-hint">Disabled in demo mode</div>
@@ -117,7 +118,7 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
           {/* Cloud & Pricing */}
           <section className="settings-section">
             <div className="settings-section-header">
-              <span className="settings-section-icon">☁️</span>
+              <span className="settings-section-icon">// CLOUD</span>
               Cloud &amp; Pricing
             </div>
 
@@ -183,7 +184,7 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
           {/* Schedule */}
           <section className="settings-section">
             <div className="settings-section-header">
-              <span className="settings-section-icon">🗓</span>
+              <span className="settings-section-icon">// SCHED</span>
               Schedule
               <span className="settings-controller-note">controller reference</span>
             </div>
@@ -251,7 +252,7 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
           {/* Prediction */}
           <section className="settings-section">
             <div className="settings-section-header">
-              <span className="settings-section-icon">🔮</span>
+              <span className="settings-section-icon">// PRED</span>
               Prediction
             </div>
 
@@ -334,7 +335,7 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
           {/* Dashboard */}
           <section className="settings-section">
             <div className="settings-section-header">
-              <span className="settings-section-icon">📊</span>
+              <span className="settings-section-icon">// UI</span>
               Dashboard
             </div>
 
@@ -351,17 +352,17 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
             </div>
 
             <div className="settings-field">
-              <label className="settings-label">Node Utilisation Threshold</label>
+              <label className="settings-label">Node Utilisation Threshold (%)</label>
               <input
                 className="settings-input"
                 type="number"
                 min="0"
-                max="1"
-                step="0.01"
-                value={draft.node_utilisation_threshold}
-                onChange={e => set('node_utilisation_threshold', parseFloat(e.target.value) || 0.1)}
+                max="100"
+                step="1"
+                value={Math.round(draft.node_utilisation_threshold * 100)}
+                onChange={e => set('node_utilisation_threshold', (parseFloat(e.target.value) || 10) / 100)}
               />
-              <div className="settings-hint">Fraction of allocatable CPU below which a node is cordoned</div>
+              <div className="settings-hint">Nodes below this CPU % are eligible for cordoning</div>
             </div>
 
             <div className="settings-field">
@@ -371,6 +372,7 @@ export default function SettingsPanel({ config, onClose, onSaved }: Props) {
                 value={draft.namespace_filter}
                 onChange={e => set('namespace_filter', e.target.value)}
                 placeholder="all namespaces"
+                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
               />
             </div>
 
