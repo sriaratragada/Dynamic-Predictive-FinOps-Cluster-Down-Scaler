@@ -156,7 +156,9 @@ export default function App() {
       {/* ── Connect Card (shown when not in demo mode and not connected) ── */}
       {!config.demo_mode && !controllerStatus?.connected && (
         <ConnectCard
+          config={config}
           onConnected={s => { setControllerStatus(s); refresh() }}
+          onConfigChange={setConfig}
         />
       )}
 

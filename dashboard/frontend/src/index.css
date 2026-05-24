@@ -671,6 +671,343 @@ body {
   text-align: center;
 }
 
+/* ── Connect Card — tabs ─────────────────────────────────────── */
+.connect-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.connect-tab {
+  flex: 1;
+  padding: 7px 12px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard),
+              color var(--dur-fast) var(--ease-standard);
+  text-align: center;
+}
+
+.connect-tab:last-child { border-right: none; }
+.connect-tab:hover { background: var(--surface-2); color: var(--text-2); }
+.connect-tab.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Connect Card — tab content ──────────────────────────────── */
+.connect-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.connect-tab-desc {
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0;
+}
+
+/* ── cmd-block — monospaced command with copy button ─────────── */
+.cmd-block {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.cmd-block code {
+  flex: 1;
+  padding: 7px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.cmd-block--multi code {
+  white-space: pre;
+}
+
+.cmd-block--multi {
+  align-items: flex-start;
+}
+
+.cmd-copy-btn {
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard),
+              color var(--dur-fast) var(--ease-standard);
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.cmd-copy-btn:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* ── cmd-step ────────────────────────────────────────────────── */
+.cmd-step {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cmd-step-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Connect deploy note ─────────────────────────────────────── */
+.connect-deploy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Required badge ──────────────────────────────────────────── */
+.required-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255,69,58,0.5);
+  border-radius: var(--radius-sm);
+  color: var(--red);
+  background: var(--red-dim);
+  flex-shrink: 0;
+}
+
+/* ── Info tooltip ────────────────────────────────────────────── */
+.info-tip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.info-tip-icon {
+  font-size: 12px;
+  color: var(--text-3);
+  cursor: help;
+  line-height: 1;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.info-tip-wrap:hover .info-tip-icon { color: var(--accent); }
+
+.info-tip-content {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10,10,10,0.97);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  width: 230px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.55;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s var(--ease-standard);
+  z-index: 100;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+
+.info-tip-content code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: var(--surface-3);
+  padding: 1px 4px;
+  border-radius: 1px;
+  color: var(--text);
+}
+
+.info-tip-content strong { color: var(--text); font-weight: 600; }
+
+/* Arrow pointing down */
+.info-tip-content::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--border-2);
+}
+
+.info-tip-wrap:hover .info-tip-content {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ── Connect Card — schedule fields ──────────────────────────── */
+.connect-schedule-block {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.connect-field-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.connect-field-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.connect-hint {
+  font-family: 'Outfit', sans-serif;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.connect-schedule-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.connect-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.connect-sched-sep {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-3);
+  padding-bottom: 7px;
+  flex-shrink: 0;
+}
+
+.connect-sched-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.connect-sched-input,
+.connect-sched-input-full {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 6px 8px;
+  width: 100%;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+  color-scheme: dark;
+}
+
+.connect-sched-input:focus,
+.connect-sched-input-full:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ── Connect Card — day pills ────────────────────────────────── */
+.connect-day-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.connect-day-pill {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-standard);
+  letter-spacing: 0.3px;
+}
+
+.connect-day-pill:hover { border-color: var(--border-2); color: var(--text-2); }
+
+.connect-day-pill.active {
+  background: var(--accent-dim);
+  border-color: rgba(41,151,255,0.4);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ── Settings controller status bar ─────────────────────────── */
 .settings-ctrl-status {
   display: flex;
