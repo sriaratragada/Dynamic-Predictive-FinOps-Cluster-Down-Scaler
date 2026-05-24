@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ConfigData, ControllerStatus } from '../api'
-import { connectCluster, fetchControllerStatus, saveConfig, stopController } from '../api'
+import { saveConfig, stopController } from '../api'
 import Toggle from './Toggle'
 
 interface Props {
@@ -19,9 +19,7 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
   const [draft, setDraft] = useState<ConfigData>({ ...config })
   const [saving, setSaving] = useState(false)
   const [toast, setToast]   = useState<Toast>(null)
-  const [kubeconfig,  setKubeconfig]  = useState('')
-  const [connecting,  setConnecting]  = useState(false)
-  const [stopping,    setStopping]    = useState(false)
+  const [stopping, setStopping] = useState(false)
 
   // Close on Escape
   useEffect(() => {
@@ -56,21 +54,6 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
   function showToast(msg: string, kind: 'success' | 'error') {
     setToast({ msg, kind })
     setTimeout(() => setToast(null), 3000)
-  }
-
-  async function handleConnect() {
-    if (!kubeconfig.trim()) return
-    setConnecting(true)
-    try {
-      const status = await connectCluster(kubeconfig.trim())
-      onControllerChange?.(status)
-      showToast('Connected — controller loop started', 'success')
-      setKubeconfig('')
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Connection failed', 'error')
-    } finally {
-      setConnecting(false)
-    }
   }
 
   async function handleStop() {
@@ -116,98 +99,28 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
         {/* ── Body ── */}
         <div className="drawer-body">
 
-          {/* Cluster Connect */}
-          <section className="settings-section">
-            <div className="settings-section-header">
-              <span className="settings-section-icon">// CLUSTER</span>
-              Cluster Connection
-            </div>
-
-            {/* Status row */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <span
-                style={{
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 9,
-                  fontWeight: 600,
-                  letterSpacing: 1,
-                  padding: '2px 8px',
-                  borderRadius: 2,
-                  border: '1px solid',
-                  ...(controllerStatus?.connected
-                    ? { color: 'var(--green)', borderColor: 'rgba(48,209,88,0.35)', background: 'var(--green-dim)' }
-                    : { color: 'var(--text-3)', borderColor: 'var(--border)', background: 'var(--surface-2)' }),
-                }}
-              >
-                {controllerStatus?.connected ? '● CONNECTED' : '○ DISCONNECTED'}
-              </span>
-              {controllerStatus?.connected && (
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                  {controllerStatus.cluster_host}
+          {/* ── Controller status (compact, shown when connected) ── */}
+          {controllerStatus?.connected && (
+            <div className="settings-ctrl-status">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                <span className={`settings-ctrl-dot settings-ctrl-dot--${controllerStatus.running ? 'running' : 'stopped'}`} />
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-2)' }}>
+                  {controllerStatus.running ? 'Controller running' : 'Controller stopped'}
                 </span>
-              )}
-            </div>
-
-            {controllerStatus?.connected ? (
-              <>
-                <div className="settings-toggle-row" style={{ paddingTop: 4, paddingBottom: 4 }}>
-                  <div className="settings-toggle-info">
-                    <div className="settings-toggle-title">Controller Loop</div>
-                    <div className="settings-toggle-desc">
-                      {controllerStatus.running
-                        ? `Running · last tick ${controllerStatus.last_tick ? new Date(controllerStatus.last_tick).toLocaleTimeString() : 'never'}`
-                        : `Stopped · last action: ${controllerStatus.last_action}`}
-                    </div>
-                    {controllerStatus.error && (
-                      <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 3, fontFamily: "'JetBrains Mono', monospace" }}>
-                        {controllerStatus.error}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    className="btn-ghost"
-                    style={{ padding: '4px 12px', fontSize: 11, flexShrink: 0 }}
-                    disabled={stopping}
-                    onClick={handleStop}
-                  >
-                    {stopping ? 'Stopping…' : 'Stop Loop'}
-                  </button>
-                </div>
-                <div className="settings-hint" style={{ marginTop: 8 }}>
-                  To connect a different cluster, paste a new kubeconfig below and click Connect.
-                </div>
-              </>
-            ) : (
-              <div className="settings-hint" style={{ marginBottom: 10 }}>
-                Paste your <code style={{ fontFamily: "'JetBrains Mono', monospace", background: 'var(--surface-3)', padding: '1px 4px', borderRadius: 2 }}>~/.kube/config</code> to activate the live controller loop.
-                The schedule, scale-down targets, and all other settings below are applied immediately.
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  · {controllerStatus.cluster_host}
+                </span>
               </div>
-            )}
-
-            <div className="settings-field">
-              <label className="settings-label">kubeconfig YAML</label>
-              <textarea
-                className="settings-input"
-                rows={6}
-                value={kubeconfig}
-                onChange={e => setKubeconfig(e.target.value)}
-                placeholder={"apiVersion: v1\nkind: Config\nclusters:\n- cluster:\n    server: https://...\n  name: my-cluster\n..."}
-                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, resize: 'vertical', lineHeight: 1.5 }}
-              />
-              <div className="settings-hint">
-                Credentials are used only for direct Kubernetes API calls — never stored on disk or sent anywhere else.
-              </div>
+              <button
+                className="btn-ghost"
+                style={{ padding: '3px 10px', fontSize: 11, flexShrink: 0 }}
+                disabled={stopping}
+                onClick={handleStop}
+              >
+                {stopping ? '…' : 'Stop'}
+              </button>
             </div>
-
-            <button
-              className="btn-primary"
-              style={{ width: '100%', marginTop: 8 }}
-              disabled={!kubeconfig.trim() || connecting}
-              onClick={handleConnect}
-            >
-              {connecting ? 'Connecting…' : controllerStatus?.connected ? 'Reconnect' : 'Validate & Connect'}
-            </button>
-          </section>
+          )}
 
           {/* Connection */}
           <section className="settings-section">

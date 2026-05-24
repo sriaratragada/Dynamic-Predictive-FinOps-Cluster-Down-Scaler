@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig, fetchEvents, fetchControllerStatus } from './api'
 import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData, EventsData, ControllerStatus } from './api'
-import MetricsBar      from './components/MetricsBar'
-import NodeTopology    from './components/NodeTopology'
+import MetricsBar          from './components/MetricsBar'
+import NodeTopology        from './components/NodeTopology'
 import DemandCapacityChart from './components/DemandCapacityChart'
-import SettingsPanel   from './components/SettingsPanel'
-import DemoBanner      from './components/DemoBanner'
-import AuditLog        from './components/AuditLog'
+import SettingsPanel       from './components/SettingsPanel'
+import DemoBanner          from './components/DemoBanner'
+import AuditLog            from './components/AuditLog'
+import ConnectCard         from './components/ConnectCard'
+import ScheduleStrip       from './components/ScheduleStrip'
 
 const DEFAULT_CONFIG: ConfigData = {
   prometheus_url:               'http://prometheus:9090',
@@ -151,8 +153,22 @@ export default function App() {
       {/* ── Error ── */}
       {error && <div className="error-banner">{error}</div>}
 
+      {/* ── Connect Card (shown when not in demo mode and not connected) ── */}
+      {!config.demo_mode && !controllerStatus?.connected && (
+        <ConnectCard
+          onConnected={s => { setControllerStatus(s); refresh() }}
+        />
+      )}
+
       {/* ── Metrics Bar ── */}
       <MetricsBar savings={savings} status={status} />
+
+      {/* ── Schedule Strip ── */}
+      <ScheduleStrip
+        config={config}
+        status={status}
+        onEdit={() => setSettingsOpen(true)}
+      />
 
       {/* ── Node Topology ── */}
       <div data-reveal="2">
