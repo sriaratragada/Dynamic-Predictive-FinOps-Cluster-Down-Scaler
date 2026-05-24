@@ -213,6 +213,14 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
         {/* ── Right: schedule + kubeconfig ── */}
         <div className="connect-card-form">
 
+          {/* Demo mode notice */}
+          {config.demo_mode && (
+            <div className="connect-demo-notice">
+              <span className="connect-demo-notice-tag">DEMO</span>
+              Connecting will switch from synthetic data to your live cluster
+            </div>
+          )}
+
           {/* Quick Schedule */}
           <div className="connect-schedule-block">
             <div className="connect-field-header" style={{ marginBottom: 10 }}>
@@ -323,7 +331,8 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
           </button>
 
           <p className="connect-footnote">
-            No cluster? Enable <strong>Demo Mode</strong> in <strong>⚙ Settings → // CONN</strong>
+            No cluster right now? Just explore with the{' '}
+            <strong>synthetic demo data above</strong> — no credentials needed.
           </p>
         </div>
 

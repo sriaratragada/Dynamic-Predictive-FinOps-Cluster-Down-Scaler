@@ -153,8 +153,8 @@ export default function App() {
       {/* ── Error ── */}
       {error && <div className="error-banner">{error}</div>}
 
-      {/* ── Connect Card (shown when not in demo mode and not connected) ── */}
-      {!config.demo_mode && !controllerStatus?.connected && (
+      {/* ── Connect Card (shown whenever not yet connected to a real cluster) ── */}
+      {!controllerStatus?.connected && (
         <ConnectCard
           config={config}
           onConnected={s => { setControllerStatus(s); refresh() }}
