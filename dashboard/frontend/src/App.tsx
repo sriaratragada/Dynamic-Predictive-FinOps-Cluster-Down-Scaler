@@ -8,7 +8,29 @@ import SettingsPanel   from './components/SettingsPanel'
 import DemoBanner      from './components/DemoBanner'
 import AuditLog        from './components/AuditLog'
 
-const DEFAULT_POLL_MS = 30_000
+const DEFAULT_CONFIG: ConfigData = {
+  prometheus_url:               'http://prometheus:9090',
+  demo_mode:                    true,
+  cloud_provider:               'manual',
+  instance_type:                '',
+  aws_region:                   '',
+  node_hourly_cost:             0.192,
+  business_hours_start:         '07:00',
+  business_hours_end:           '19:00',
+  business_days:                '0,1,2,3,4',
+  timezone:                     'UTC',
+  prewarm_minutes:              15,
+  enable_metric_override:       false,
+  enable_prophet:               false,
+  prophet_training_weeks:       4,
+  prophet_idle_threshold_cores: 0.5,
+  prophet_retrain_hours:        6,
+  poll_interval_seconds:        30,
+  node_utilisation_threshold:   0.10,
+  namespace_filter:             '',
+  min_replica_floor:            0,
+  enable_prewarm:               false,
+}
 
 export default function App() {
   const [status,   setStatus]   = useState<StatusData | null>(null)
@@ -16,17 +38,17 @@ export default function App() {
   const [history,  setHistory]  = useState<HistoryData | null>(null)
   const [savings,  setSavings]  = useState<SavingsData | null>(null)
   const [events,   setEvents]   = useState<EventsData | null>(null)
-  const [config,   setConfig]   = useState<ConfigData | null>(null)
+  const [config,   setConfig]   = useState<ConfigData>(DEFAULT_CONFIG)
   const [error,    setError]    = useState<string | null>(null)
   const [historyHours,  setHistoryHours]  = useState(24)
   const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null)
   const [settingsOpen,       setSettingsOpen]       = useState(false)
   const [controllerStatus,   setControllerStatus]   = useState<ControllerStatus | null>(null)
 
-  const pollInterval = config ? config.poll_interval_seconds * 1000 : DEFAULT_POLL_MS
+  const pollInterval = config.poll_interval_seconds * 1000
 
   useEffect(() => {
-    fetchConfig().then(setConfig).catch(() => {/* use defaults */})
+    fetchConfig().then(setConfig).catch(() => {/* keep DEFAULT_CONFIG */})
   }, [])
 
   const refresh = useCallback(async (hours = historyHours) => {
@@ -122,7 +144,7 @@ export default function App() {
       </header>
 
       {/* ── Demo Banner ── */}
-      {config?.demo_mode && (
+      {config.demo_mode && (
         <DemoBanner onOpenSettings={() => setSettingsOpen(true)} />
       )}
 
@@ -153,7 +175,7 @@ export default function App() {
       </div>
 
       {/* ── Settings Drawer ── */}
-      {settingsOpen && config && (
+      {settingsOpen && (
         <SettingsPanel
           config={config}
           onClose={() => setSettingsOpen(false)}
