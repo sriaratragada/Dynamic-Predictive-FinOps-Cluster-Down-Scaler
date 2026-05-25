@@ -101,7 +101,7 @@ curl "http://localhost:8090/api/history?hours=24"
 
 ## 2 — Web Service Mode (connect your cluster from the browser)
 
-> Run a single Docker container outside the cluster. Paste your kubeconfig into the Settings panel — the embedded controller loop starts automatically. No Helm, no RBAC manifests, no in-cluster install.
+> Run a single Docker container outside the cluster. Connect to any Kubernetes cluster directly from the UI — paste a kubeconfig, or authenticate natively with AWS EKS or GCP GKE credentials. No Helm, no RBAC manifests, no in-cluster install.
 
 ```bash
 docker run -p 8090:8090 ghcr.io/your-org/finops-scaler:latest
@@ -109,7 +109,17 @@ docker run -p 8090:8090 ghcr.io/your-org/finops-scaler:latest
 docker compose up
 ```
 
-Open **http://localhost:8090**, click **⚙ Settings**, scroll to **// CLUSTER**.
+Open **http://localhost:8090**, click the **// CONN Cluster** tab in the navigation.
+
+**Three ways to connect:**
+
+| Method | When to use | What you provide |
+|:-------|:-----------|:-----------------|
+| **Kubeconfig** | Any cluster you already have `kubectl` access to | Paste raw kubeconfig YAML |
+| **AWS EKS** | Amazon EKS cluster | IAM access key ID + secret key → pick cluster from list |
+| **GCP GKE** | Google GKE cluster | Service account JSON key → pick cluster from list |
+
+For AWS EKS, STS bearer tokens (valid 15 min) are automatically refreshed every 13 minutes in the background — no reconnect needed for long-running sessions.
 
 ```mermaid
 sequenceDiagram
@@ -151,6 +161,10 @@ The `ControllerRunner` re-implements the core tick logic without importing the `
 | Method | Path | Description |
 |:-------|:-----|:------------|
 | `POST` | `/api/connect` | Accept kubeconfig YAML, validate against cluster, start controller loop |
+| `POST` | `/api/connect/eks` | Authenticate via IAM key, generate kubeconfig from EKS API, start loop |
+| `POST` | `/api/connect/gke` | Authenticate via service account JSON, generate kubeconfig from GKE API, start loop |
+| `POST` | `/api/aws/clusters` | List EKS clusters in a region using IAM credentials |
+| `POST` | `/api/gcp/clusters` | List GKE clusters in a project/location using service account credentials |
 | `GET` | `/api/controller` | Return `RunnerStatus` (connected, running, cluster_host, last_tick, last_action, error) |
 | `POST` | `/api/controller/stop` | Stop the controller loop; cluster connection remains |
 
@@ -219,14 +233,23 @@ The Vite dev server proxies all `/api/*` and `/health` requests to `localhost:80
 
 Once the dashboard is open (whether via Docker, web service, or local dev), click **⚙ Settings** in the top-right of the header. A panel slides in from the right with six sections:
 
+**Cluster Connection page** (// CONN tab in the nav bar):
+
 | Section | What you configure |
 |:--------|:------------|
-| **// CLUSTER** | Paste kubeconfig · start / stop embedded controller loop · connection status badge |
-| **// CONN** | Toggle demo mode on/off · Prometheus URL |
-| **// CLOUD** | Cloud provider (Manual / AWS / GCP) · instance type · region · hourly rate |
-| **// SCHED** | Business hours · active days (pill buttons) · timezone · pre-warm minutes |
+| **Connection method** | Provider selector (Kubeconfig / AWS EKS / GCP GKE) · credentials · one-click connect |
+| **Get credentials** | Slide-in sidebar with step-by-step setup for each provider, kubectl commands, IAM policy JSON, GCP role binding |
+| **Scale schedule** | Business hours · active days · timezone · pre-warm minutes |
+| **Data source** | Demo mode toggle · Prometheus URL |
+| **Controller settings** | Namespace filter · min replica floor · poll interval |
+
+**Settings drawer** (⚙ button in the header — fine-tuning):
+
+| Section | What you configure |
+|:--------|:------------|
+| **// CTRL** | Controller status · stop loop |
 | **// PRED** | Metric override · Prophet ML on/off · training weeks · idle threshold · retrain interval |
-| **// UI** | Poll interval · node utilisation threshold · namespace filter · min replica floor |
+| **// UI** | Node utilisation threshold · advanced display options |
 
 Click **Save Changes** — the backend accepts the update, invalidates pricing caches if needed, and the dashboard refreshes data immediately.
 

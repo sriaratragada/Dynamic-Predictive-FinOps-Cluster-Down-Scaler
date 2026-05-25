@@ -494,14 +494,16 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | | `webhook.py` | `WebhookNotifier` — Slack-compatible HTTP POST on scale-down/up; fire-and-forget, errors swallowed |
 | | `leader_election.py` | `LeaderElector` — `coordination.k8s.io/v1` Lease; blocks non-leaders, steals expired leases |
 | **Controller demo** | `demo_stub.py` | DemoPrometheusClient · DemoStateStore · DemoCoreV1Api · DemoAppsV1Api · DemoAutoscalingV2Api · DemoCoordinationV1Api — synthetic data, no K8s |
-| **Dashboard Backend** | FastAPI + uvicorn | REST API (11 routes) + React static file serving |
-| | `controller_runner.py` | `ControllerRunner` — daemon thread with embedded scale/cordon logic; `POST /api/connect` starts it with a pasted kubeconfig; state persisted to `/tmp/finops-web-state.json` |
+| **Dashboard Backend** | FastAPI + uvicorn | REST API (15 routes) + React static file serving |
+| | `cloud_providers.py` | `list_eks_clusters` · `kubeconfig_from_eks` · `get_eks_token` (STS presigned URL, `k8s-aws-v1.*`) · `list_gke_clusters` · `kubeconfig_from_gke` — native EKS/GKE discovery without kubectl |
+| | `controller_runner.py` | `ControllerRunner` — daemon thread with embedded scale/cordon logic; stores cloud credentials for EKS STS token auto-refresh every 13 min |
 | | `auth.py` | Per-request `Authorization: Bearer <token>` middleware; reads `API_TOKEN` each call |
 | | `config_store.py` | Mutable `DashboardConfig` — hot-patchable via `PATCH /api/config`, no restart |
 | | `demo_stub.py` | DemoK8sReader + synthetic Prometheus responses for all endpoints |
-| | `boto3` | AWS EC2 Pricing API (On-Demand Linux rates) |
-| | `google-cloud-billing` | GCP Cloud Billing Catalog SKU lookup |
-| | `pyyaml` | Kubeconfig YAML parsing in web service mode |
+| | `boto3` | AWS EKS cluster listing + IAM STS presigned token generation + EC2 Pricing API |
+| | `google-cloud-container` | GKE cluster listing (`ClusterManagerClient`) |
+| | `google-auth[requests]` | GCP OAuth2 service account token generation + refresh |
+| | `pyyaml` | Kubeconfig YAML parsing and generation |
 | | `asyncio` | Background savings-tracker coroutine |
 | **Dashboard Frontend** | React 18 + TypeScript | Apple-dark infrastructure control panel SPA |
 | | Outfit + JetBrains Mono | Google Fonts — Outfit 800 for KPI numerics; JetBrains Mono for node names, timestamps, monospaced inputs |
@@ -509,7 +511,9 @@ If your model service handles the `X-Prewarm: true` header, it can skip inferenc
 | | `NodeTopology.tsx` | SVG node grid — per-node CPU bars, diagonal amber hatch for cordoned nodes, hover tooltip, responsive column layout via ResizeObserver (1–5 cols) |
 | | `useAnimatedValue.ts` | rAF-based cubic easing hook — smooth number transitions for KPI tiles |
 | | Recharts | ComposedChart — area (CPU used, `#2997ff`) + capacity line (dashed red) + event markers |
-| | `SettingsPanel.tsx` | Slide-in drawer — 6 sections (// CLUSTER · // CONN · // CLOUD · // SCHED · // PRED · // UI); kubeconfig textarea + connect flow |
+| | `ClusterPage.tsx` | Cluster Connection page — hero provider selector (Kubeconfig/EKS/GKE), large provider cards, credentials drawer, schedule + data source + controller config lower grid |
+| | `ConnectPanel.tsx` | Header drawer — connection method only (provider pills + credentials form) |
+| | `SettingsPanel.tsx` | Slide-in fine-tuning drawer (// PRED · // UI) |
 | | `AuditLog.tsx` | Reverse-chronological cordon event table — JetBrains Mono cells, accent blue duration, green savings |
 | | `DemoBanner.tsx` | First-run hint — opens Settings, dismissible per-session |
 | **Pre-Warm Engine** | `prewarm.py` | `PrewarmController` — warm cache, in-flight dedup, async Knative ping |
@@ -624,10 +628,11 @@ DynaPredictingDownScaler/
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs for DEMO_MODE
 ├── dashboard/
 │   ├── backend/
-│   │   ├── app.py              # FastAPI · 11 routes (connect, controller, config, events, status, capacity, history, savings, prewarm, health)
+│   │   ├── app.py              # FastAPI · 15 routes (connect, connect/eks, connect/gke, aws/clusters, gcp/clusters, controller, config, events, status, capacity, history, savings, prewarm, health)
 │   │   ├── auth.py             # Bearer-token middleware (API_TOKEN)
+│   │   ├── cloud_providers.py  # EKS/GKE cluster discovery · kubeconfig generation · STS token
 │   │   ├── config_store.py     # Hot-patchable DashboardConfig singleton
-│   │   ├── controller_runner.py# ControllerRunner daemon thread + RunnerStatus
+│   │   ├── controller_runner.py# ControllerRunner daemon thread + EKS STS token refresh thread
 │   │   ├── demo_stub.py        # DemoK8sReader + synthetic Prometheus responses
 │   │   ├── prewarm.py          # PrewarmController — warm cache + Knative ping (optional)
 │   │   ├── k8s_client.py       # Read state + savings ConfigMaps · list nodes
@@ -640,14 +645,16 @@ DynaPredictingDownScaler/
 │   │   │   └── useAnimatedValue.ts     # rAF cubic easing for animated KPI numbers
 │   │   └── components/
 │   │       ├── MetricsBar.tsx          # 4-tile KPI bar (saved/month/rate/cordoned)
-│   │       ├── NodeTopology.tsx        # SVG node grid with CPU bars + cordon hatch
+│   │       ├── NodeTopology.tsx        # Physics-based SVG force graph — CPU arcs, glow, drag-to-rearrange
 │   │       ├── DemandCapacityChart.tsx # Recharts ComposedChart + event markers
 │   │       ├── AuditLog.tsx            # Cordon event history table (reverse-chron)
-│   │       ├── DemoBanner.tsx          # First-run "demo mode" hint → opens Settings
-│   │       ├── SettingsPanel.tsx       # Slide-in config drawer (6 sections incl. Cluster)
-│   │       ├── Toggle.tsx              # Animated accessible toggle switch
-│   │       ├── StatusPanel.tsx         # Mode badge · node/deployment chips (kept, not rendered)
-│   │       └── DollarsSavedPanel.tsx   # Animated $ counter · provider badge (kept, not rendered)
+│   │       ├── ClusterPage.tsx         # Cluster Connection page — hero connect, provider cards, creds drawer
+│   │       ├── ConnectCard.tsx         # Inline connect card (shown via demo banner)
+│   │       ├── ConnectPanel.tsx        # Header drawer — connection method only (no schedule)
+│   │       ├── DashboardConfig.tsx     # Controller dashboard — schedule section + save bar
+│   │       ├── DemoBanner.tsx          # First-run "demo mode" hint → opens Cluster page
+│   │       ├── SettingsPanel.tsx       # Slide-in fine-tuning drawer (prediction, UI)
+│   │       └── Toggle.tsx              # Animated accessible toggle switch
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)

@@ -75,12 +75,12 @@ No YAML or environment variable editing required. Click **⚙ Settings** in the 
 
 | Section | What you set |
 |:--------|:-------------|
-| **Cluster** | Paste kubeconfig · start / stop embedded controller loop · connection status |
-| **Connection** | Toggle demo mode · Prometheus URL |
-| **Cloud & Pricing** | Provider (Manual / AWS / GCP) · instance type · region · hourly rate |
-| **Schedule** | Business hours · active days · timezone · pre-warm minutes |
+| **Cluster Connection** | Choose provider (Kubeconfig / AWS EKS / GCP GKE) · enter credentials · one-click connect · "Get credentials" sidebar with step-by-step setup |
+| **Scale Schedule** | Business hours · active days · timezone · pre-warm minutes |
+| **Data Source** | Toggle demo mode · Prometheus URL |
+| **Controller** | Namespace filter · min replica floor · poll interval |
 | **Prediction** | Metric override · Prophet ML on/off · training window · idle threshold · AI Pre-Warm Engine |
-| **Dashboard** | Poll interval · node utilisation threshold · namespace filter · min replica floor |
+| **Fine-tuning** | Node utilisation threshold · advanced controller options |
 
 Changes apply immediately — no restart needed. For Docker and Helm deployments, environment variables and `.env` file options are documented in [SETUP.md](SETUP.md).
 
@@ -133,10 +133,11 @@ DynaPredictingDownScaler/
 │   └── demo_stub.py         # Synthetic K8s + Prometheus stubs (DEMO_MODE)
 ├── dashboard/
 │   ├── backend/
-│   │   ├── app.py              # FastAPI — 11 routes + React SPA serving
+│   │   ├── app.py              # FastAPI — 15 routes + React SPA serving
 │   │   ├── auth.py             # Bearer-token middleware (API_TOKEN)
+│   │   ├── cloud_providers.py  # EKS/GKE cluster discovery, kubeconfig generation, STS token
 │   │   ├── config_store.py     # Hot-patchable DashboardConfig (GET/PATCH /api/config)
-│   │   ├── controller_runner.py# Embedded controller loop (ControllerRunner daemon thread)
+│   │   ├── controller_runner.py# Embedded controller loop + EKS token auto-refresh thread
 │   │   ├── demo_stub.py        # DemoK8sReader + synthetic Prometheus responses
 │   │   ├── prewarm.py          # PrewarmController — warm cache + async Knative ping
 │   │   ├── k8s_client.py       # Read state + savings ConfigMaps · list nodes
@@ -149,14 +150,16 @@ DynaPredictingDownScaler/
 │   │   │   └── useAnimatedValue.ts     # rAF-based easing hook for animated KPI numbers
 │   │   └── components/
 │   │       ├── MetricsBar.tsx          # 4-tile animated KPI bar (saved/month/rate/cordoned)
-│   │       ├── NodeTopology.tsx        # SVG node grid — CPU bars, cordon hatch, tooltips
+│   │       ├── NodeTopology.tsx        # Physics-based SVG force graph — CPU arcs, cordon hatch, drag
 │   │       ├── DemandCapacityChart.tsx # Recharts ComposedChart + event markers
 │   │       ├── AuditLog.tsx            # Cordon event history table (reverse-chron)
-│   │       ├── SettingsPanel.tsx       # Slide-in config drawer (6 sections incl. Cluster)
-│   │       ├── DemoBanner.tsx          # "Running in demo mode" — opens Settings
-│   │       ├── Toggle.tsx              # Animated accessible toggle switch
-│   │       ├── StatusPanel.tsx         # Mode badge · node/deployment chips (kept, not rendered)
-│   │       └── DollarsSavedPanel.tsx   # Animated $ counter · provider badge (kept, not rendered)
+│   │       ├── ClusterPage.tsx         # Cluster Connection page — hero connect, provider cards, credentials drawer
+│   │       ├── ConnectCard.tsx         # Inline connect card (demo banner flow)
+│   │       ├── ConnectPanel.tsx        # Header drawer — connection method only
+│   │       ├── DashboardConfig.tsx     # Controller dashboard config (schedule section)
+│   │       ├── SettingsPanel.tsx       # Slide-in fine-tuning drawer
+│   │       ├── DemoBanner.tsx          # "Running in demo mode" — opens Cluster page
+│   │       └── Toggle.tsx              # Animated accessible toggle switch
 │   └── Dockerfile               # Node 20-alpine builds React → Python 3.12-slim serves
 ├── helm/finops-scaler/          # Helm chart (values.yaml + 6 templates)
 ├── manifests/                   # Raw Kubernetes YAML (controller + dashboard)
