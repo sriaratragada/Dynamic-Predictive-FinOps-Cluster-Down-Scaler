@@ -141,3 +141,77 @@ export async function saveConfig(updates: Partial<ConfigData>): Promise<ConfigDa
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
   return r.json()
 }
+
+// ── Cloud provider types ──────────────────────────────────────────────────────
+
+export const AWS_REGIONS = [
+  { value: 'us-east-1',      label: 'US East (N. Virginia)' },
+  { value: 'us-east-2',      label: 'US East (Ohio)' },
+  { value: 'us-west-1',      label: 'US West (N. California)' },
+  { value: 'us-west-2',      label: 'US West (Oregon)' },
+  { value: 'eu-west-1',      label: 'EU (Ireland)' },
+  { value: 'eu-central-1',   label: 'EU (Frankfurt)' },
+  { value: 'ap-southeast-1', label: 'Asia Pacific (Singapore)' },
+  { value: 'ap-northeast-1', label: 'Asia Pacific (Tokyo)' },
+  { value: 'ap-south-1',     label: 'Asia Pacific (Mumbai)' },
+]
+
+export interface EksCluster {
+  name: string
+  endpoint: string
+  status: string
+  kubernetes_version: string
+}
+
+export interface GkeCluster {
+  name: string
+  endpoint: string
+  status: string
+  kubernetes_version: string
+  location: string
+}
+
+// ── Cloud provider API calls ──────────────────────────────────────────────────
+
+async function _post<T>(url: string, body: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) {
+    const payload = await r.json().catch(() => ({ detail: r.statusText }))
+    throw new Error(payload.detail || r.statusText)
+  }
+  return r.json()
+}
+
+export const listEksClusters = (
+  region: string, accessKeyId: string, secretAccessKey: string,
+): Promise<EksCluster[]> =>
+  _post<{ clusters: EksCluster[] }>('/api/aws/clusters', {
+    region, access_key_id: accessKeyId, secret_access_key: secretAccessKey,
+  }).then(d => d.clusters)
+
+export const listGkeClusters = (
+  projectId: string, location: string, serviceAccountJson: string,
+): Promise<GkeCluster[]> =>
+  _post<{ clusters: GkeCluster[] }>('/api/gcp/clusters', {
+    project_id: projectId, location, service_account_json: serviceAccountJson,
+  }).then(d => d.clusters)
+
+export const connectEks = (
+  region: string, clusterName: string, accessKeyId: string, secretAccessKey: string,
+): Promise<ControllerStatus> =>
+  _post('/api/connect/eks', {
+    region, cluster_name: clusterName,
+    access_key_id: accessKeyId, secret_access_key: secretAccessKey,
+  })
+
+export const connectGke = (
+  projectId: string, location: string, clusterName: string, serviceAccountJson: string,
+): Promise<ControllerStatus> =>
+  _post('/api/connect/gke', {
+    project_id: projectId, location,
+    cluster_name: clusterName, service_account_json: serviceAccountJson,
+  })

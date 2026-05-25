@@ -41,6 +41,9 @@ _STATE_FILE  = os.path.join(tempfile.gettempdir(), "finops-web-state.json")
 _LABEL_SEL   = "finops.io/scaledown-eligible=true"
 _CP_LABELS   = {"node-role.kubernetes.io/control-plane", "node-role.kubernetes.io/master"}
 
+# EKS STS tokens expire after 15 minutes; refresh 2 minutes early
+_EKS_TOKEN_REFRESH_INTERVAL = 13 * 60  # seconds
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -125,6 +128,13 @@ class ControllerRunner:
         self._apps_v1 = None
         self._kubeconfig_path: Optional[str] = None
 
+        # cloud provider credentials — set by set_cloud_creds() after connect()
+        self._connection_type: str = "kubeconfig"  # "kubeconfig" | "eks" | "gke"
+        self._cloud_creds: dict = {}
+
+        # EKS token refresh thread
+        self._refresher_thread: Optional[threading.Thread] = None
+
     # ── Public API ────────────────────────────────────────────────
 
     def connect(self, kubeconfig_str: str):
@@ -185,6 +195,7 @@ class ControllerRunner:
         """
         Start the control loop in a background daemon thread.
         Config is re-read from config_store on every tick.
+        Also starts the EKS token refresh thread when connected via EKS.
         """
         self.stop()
         self._stop_event.clear()
@@ -197,6 +208,11 @@ class ControllerRunner:
             name="finops-controller",
         )
         self._thread.start()
+
+        # Start token refresh only after stop_event is cleared
+        if self._connection_type == "eks" and self._cloud_creds:
+            self._start_token_refresher()
+
         logger.info("Controller loop started (interval=%ds)", interval_seconds)
 
     def stop(self):
@@ -205,8 +221,16 @@ class ControllerRunner:
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=8)
+        if self._refresher_thread and self._refresher_thread.is_alive():
+            self._refresher_thread.join(timeout=5)
         self._last_action = "stopped"
         logger.info("Controller loop stopped")
+
+    def set_cloud_creds(self, connection_type: str, creds: dict) -> None:
+        """Store cloud provider credentials for use by the token refresh thread (Session 3)."""
+        with self._lock:
+            self._connection_type = connection_type
+            self._cloud_creds = creds
 
     def disconnect(self):
         """Stop loop and clear the cluster connection."""
@@ -227,6 +251,53 @@ class ControllerRunner:
             last_action  = self._last_action,
             error        = self._error,
         )
+
+    # ── EKS token refresh ─────────────────────────────────────────
+
+    def _start_token_refresher(self) -> None:
+        self._refresher_thread = threading.Thread(
+            target=self._token_refresh_loop,
+            daemon=True,
+            name="finops-eks-token-refresher",
+        )
+        self._refresher_thread.start()
+        logger.info(
+            "EKS token refresh thread started (interval=%ds)", _EKS_TOKEN_REFRESH_INTERVAL
+        )
+
+    def _token_refresh_loop(self) -> None:
+        """
+        Refresh the EKS STS bearer token every 13 minutes while connected.
+
+        EKS tokens expire after 15 minutes.  We patch the token directly on
+        the ApiClient.configuration held by the already-connected CoreV1Api /
+        AppsV1Api objects so the running control loop picks it up transparently.
+        """
+        from .cloud_providers import get_eks_token  # local import — only for EKS
+
+        # Stop immediately if the event is already set (e.g., called during stop/restart)
+        while not self._stop_event.wait(timeout=_EKS_TOKEN_REFRESH_INTERVAL):
+            with self._lock:
+                if self._connection_type != "eks" or not self._cloud_creds:
+                    break
+                creds   = dict(self._cloud_creds)
+                core_v1 = self._core_v1
+                apps_v1 = self._apps_v1
+
+            try:
+                new_token = get_eks_token(
+                    creds["cluster_name"],
+                    creds["region"],
+                    creds["access_key_id"],
+                    creds["secret_access_key"],
+                )
+                # Patch the token in-place on both API clients
+                for api in (core_v1, apps_v1):
+                    if api is not None:
+                        api.api_client.configuration.api_key["authorization"] = new_token
+                logger.info("EKS token refreshed for cluster %s", creds["cluster_name"])
+            except Exception as exc:
+                logger.warning("EKS token refresh failed (will retry next interval): %s", exc)
 
     # ── Internal loop ─────────────────────────────────────────────
 

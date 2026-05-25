@@ -109,11 +109,8 @@ export default function DashboardConfig({ config, status, onSaved }: Props) {
           </div>
         )}
 
-        {/* ── 3-column config grid ── */}
-        <div className="dash-config-grid dash-config-grid--2col">
-
-          {/* ── Schedule ── */}
-          <div className="dash-config-section">
+        {/* ── Schedule ── */}
+        <div className="dash-config-section">
             <div className="dash-config-header">
               <span className="dash-config-tag">// SCHED</span>
               <span className="dash-config-title">Schedule</span>
@@ -177,76 +174,6 @@ export default function DashboardConfig({ config, status, onSaved }: Props) {
               />
             </div>
           </div>
-
-          <div className="dash-config-divider" />
-
-          {/* ── Cloud & Pricing ── */}
-          <div className="dash-config-section">
-            <div className="dash-config-header">
-              <span className="dash-config-tag">// CLOUD</span>
-              <span className="dash-config-title">Cloud &amp; Pricing</span>
-            </div>
-
-            <div className="dash-config-field">
-              <div className="dash-config-label">Provider</div>
-              <div className="dash-segmented">
-                {(['manual', 'aws', 'gcp'] as const).map(p => (
-                  <button
-                    key={p}
-                    type="button"
-                    className={`dash-segmented-btn ${draft.cloud_provider === p ? 'active' : ''}`}
-                    onClick={() => set('cloud_provider', p)}
-                  >
-                    {p === 'manual' ? 'Manual' : p.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-              <div className="dash-config-hint">
-                {draft.cloud_provider !== 'manual'
-                  ? `Pricing fetched from ${draft.cloud_provider.toUpperCase()} API`
-                  : 'Enter a fixed rate below'}
-              </div>
-            </div>
-
-            {draft.cloud_provider !== 'manual' && (
-              <div className="dash-config-field">
-                <div className="dash-config-label">Instance type</div>
-                <input
-                  className="dash-config-input"
-                  value={draft.instance_type}
-                  onChange={e => set('instance_type', e.target.value)}
-                  placeholder={draft.cloud_provider === 'aws' ? 'm5.xlarge' : 'n2-standard-4'}
-                />
-              </div>
-            )}
-
-            {draft.cloud_provider === 'aws' && (
-              <div className="dash-config-field">
-                <div className="dash-config-label">AWS region</div>
-                <input
-                  className="dash-config-input"
-                  value={draft.aws_region}
-                  onChange={e => set('aws_region', e.target.value)}
-                  placeholder="us-east-1"
-                />
-              </div>
-            )}
-
-            <div className="dash-config-field">
-              <div className="dash-config-label">Node cost ($/hr)</div>
-              <input
-                className="dash-config-input dash-config-input--short"
-                type="number"
-                min="0"
-                step="0.001"
-                value={draft.node_hourly_cost}
-                onChange={e => set('node_hourly_cost', parseFloat(e.target.value) || 0)}
-              />
-              <div className="dash-config-hint">Fallback when provider pricing unavailable</div>
-            </div>
-          </div>
-
-        </div>{/* /dash-config-grid */}
 
         {/* ── Save bar — appears when dirty ── */}
         {dirty && (

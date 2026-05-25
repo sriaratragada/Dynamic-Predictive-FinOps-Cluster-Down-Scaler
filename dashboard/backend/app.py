@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -162,7 +162,6 @@ async def api_prewarm(request: Request, _: None = Depends(require_token)):
     body = await request.json()
     service_url: str = (body.get("service_url") or "").strip()
     if not service_url:
-        from fastapi import HTTPException  # noqa: PLC0415
         raise HTTPException(status_code=422, detail="service_url is required")
 
     signal = str(body.get("signal", "unknown"))
@@ -389,7 +388,6 @@ async def api_connect(request: Request, _: None = Depends(require_token)):
     body = await request.json()
     kubeconfig_str: str = (body.get("kubeconfig") or "").strip()
     if not kubeconfig_str:
-        from fastapi import HTTPException  # noqa: PLC0415
         raise HTTPException(status_code=422, detail="kubeconfig is required")
 
     runner = _get_runner()
@@ -401,7 +399,6 @@ async def api_connect(request: Request, _: None = Depends(require_token)):
             None, runner.connect, kubeconfig_str
         )
     except Exception as exc:
-        from fastapi import HTTPException  # noqa: PLC0415
         raise HTTPException(status_code=400, detail=f"Cluster unreachable: {exc}") from exc
 
     # Re-initialise the dashboard's K8s reader with the connected clients
@@ -420,6 +417,202 @@ async def api_connect(request: Request, _: None = Depends(require_token)):
     await loop.run_in_executor(None, lambda: runner.start(60))
 
     logger.info("Web-service mode: controller started, K8sReader re-initialised")
+    return runner.status().as_dict()
+
+
+@app.post("/api/aws/clusters")
+async def api_aws_clusters(request: Request, _: None = Depends(require_token)):
+    """
+    List EKS clusters in the given region using explicit AWS credentials.
+
+    Body (JSON):
+        region            str  AWS region (e.g. "us-east-1")
+        access_key_id     str  AWS access key ID
+        secret_access_key str  AWS secret access key
+    """
+    from . import cloud_providers  # noqa: PLC0415
+
+    body = await request.json()
+    region            = (body.get("region")            or "").strip()
+    access_key_id     = (body.get("access_key_id")     or "").strip()
+    secret_access_key = (body.get("secret_access_key") or "").strip()
+
+    if not all([region, access_key_id, secret_access_key]):
+        raise HTTPException(
+            status_code=422,
+            detail="region, access_key_id, and secret_access_key are required",
+        )
+
+    loop = asyncio.get_event_loop()
+    try:
+        clusters = await loop.run_in_executor(
+            None, cloud_providers.list_eks_clusters, region, access_key_id, secret_access_key
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"AWS error: {exc}") from exc
+
+    return {"clusters": clusters}
+
+
+@app.post("/api/gcp/clusters")
+async def api_gcp_clusters(request: Request, _: None = Depends(require_token)):
+    """
+    List GKE clusters using a GCP service account JSON string.
+
+    Body (JSON):
+        project_id           str  GCP project ID
+        location             str  Region or zone (use "-" for all locations)
+        service_account_json str  Full service account JSON key file contents
+    """
+    from . import cloud_providers  # noqa: PLC0415
+
+    body = await request.json()
+    project_id           = (body.get("project_id")           or "").strip()
+    location             = (body.get("location")             or "-").strip()
+    service_account_json = (body.get("service_account_json") or "").strip()
+
+    if not all([project_id, service_account_json]):
+        raise HTTPException(
+            status_code=422,
+            detail="project_id and service_account_json are required",
+        )
+
+    loop = asyncio.get_event_loop()
+    try:
+        clusters = await loop.run_in_executor(
+            None, cloud_providers.list_gke_clusters, project_id, location, service_account_json
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"GCP error: {exc}") from exc
+
+    return {"clusters": clusters}
+
+
+@app.post("/api/connect/eks")
+async def api_connect_eks(request: Request, _: None = Depends(require_token)):
+    """
+    Connect to an EKS cluster using explicit AWS credentials, then start the
+    embedded controller loop.
+
+    Body (JSON):
+        region            str  AWS region
+        cluster_name      str  EKS cluster name
+        access_key_id     str  AWS access key ID
+        secret_access_key str  AWS secret access key
+    """
+    global _k8s, _tracker
+    from . import cloud_providers  # noqa: PLC0415
+
+    body = await request.json()
+    region            = (body.get("region")            or "").strip()
+    cluster_name      = (body.get("cluster_name")      or "").strip()
+    access_key_id     = (body.get("access_key_id")     or "").strip()
+    secret_access_key = (body.get("secret_access_key") or "").strip()
+
+    if not all([region, cluster_name, access_key_id, secret_access_key]):
+        raise HTTPException(
+            status_code=422,
+            detail="region, cluster_name, access_key_id, and secret_access_key are required",
+        )
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        kubeconfig_str = await loop.run_in_executor(
+            None,
+            cloud_providers.kubeconfig_from_eks,
+            cluster_name, region, access_key_id, secret_access_key,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"EKS kubeconfig error: {exc}") from exc
+
+    runner = _get_runner()
+    try:
+        core_v1, apps_v1 = await loop.run_in_executor(None, runner.connect, kubeconfig_str)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cluster unreachable: {exc}") from exc
+
+    # Store credentials for EKS token refresh (Session 3)
+    runner.set_cloud_creds("eks", {
+        "region": region,
+        "cluster_name": cluster_name,
+        "access_key_id": access_key_id,
+        "secret_access_key": secret_access_key,
+    })
+
+    _k8s = K8sReader(core_v1=core_v1, apps_v1=apps_v1)
+    if _tracker is not None:
+        _tracker._stop = True
+    _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
+    asyncio.create_task(_tracker.start())
+    config_store.patch({"demo_mode": False})
+    await loop.run_in_executor(None, lambda: runner.start(60))
+
+    logger.info("EKS cluster connected: %s (%s)", cluster_name, region)
+    return runner.status().as_dict()
+
+
+@app.post("/api/connect/gke")
+async def api_connect_gke(request: Request, _: None = Depends(require_token)):
+    """
+    Connect to a GKE cluster using a GCP service account JSON string, then
+    start the embedded controller loop.
+
+    Body (JSON):
+        project_id           str  GCP project ID
+        location             str  Region or zone (e.g. "us-central1")
+        cluster_name         str  GKE cluster name
+        service_account_json str  Full service account JSON key file contents
+    """
+    global _k8s, _tracker
+    from . import cloud_providers  # noqa: PLC0415
+
+    body = await request.json()
+    project_id           = (body.get("project_id")           or "").strip()
+    location             = (body.get("location")             or "").strip()
+    cluster_name         = (body.get("cluster_name")         or "").strip()
+    service_account_json = (body.get("service_account_json") or "").strip()
+
+    if not all([project_id, location, cluster_name, service_account_json]):
+        raise HTTPException(
+            status_code=422,
+            detail="project_id, location, cluster_name, and service_account_json are required",
+        )
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        kubeconfig_str = await loop.run_in_executor(
+            None,
+            cloud_providers.kubeconfig_from_gke,
+            project_id, location, cluster_name, service_account_json,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"GKE kubeconfig error: {exc}") from exc
+
+    runner = _get_runner()
+    try:
+        core_v1, apps_v1 = await loop.run_in_executor(None, runner.connect, kubeconfig_str)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cluster unreachable: {exc}") from exc
+
+    # Store credentials for future GKE token refresh
+    runner.set_cloud_creds("gke", {
+        "project_id": project_id,
+        "location": location,
+        "cluster_name": cluster_name,
+        "service_account_json": service_account_json,
+    })
+
+    _k8s = K8sReader(core_v1=core_v1, apps_v1=apps_v1)
+    if _tracker is not None:
+        _tracker._stop = True
+    _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
+    asyncio.create_task(_tracker.start())
+    config_store.patch({"demo_mode": False})
+    await loop.run_in_executor(None, lambda: runner.start(60))
+
+    logger.info("GKE cluster connected: %s (%s/%s)", cluster_name, project_id, location)
     return runner.status().as_dict()
 
 

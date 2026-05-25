@@ -1,6 +1,11 @@
 import { useState } from 'react'
-import type { ConfigData, ControllerStatus } from '../api'
-import { connectCluster, saveConfig } from '../api'
+import type { ConfigData, ControllerStatus, EksCluster, GkeCluster } from '../api'
+import {
+  AWS_REGIONS,
+  connectCluster, connectEks, connectGke,
+  listEksClusters, listGkeClusters,
+  saveConfig,
+} from '../api'
 
 interface Props {
   config: ConfigData
@@ -8,7 +13,8 @@ interface Props {
   onConfigChange?: (c: ConfigData) => void
 }
 
-type Tab = 'paste' | 'generate'
+type Tab      = 'paste' | 'generate'
+type Provider = 'kubeconfig' | 'eks' | 'gke'
 
 const DAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 
@@ -58,11 +64,33 @@ function parseDays(str: string): Set<number> {
 
 export default function ConnectCard({ config, onConnected, onConfigChange }: Props) {
   const [tab, setTab] = useState<Tab>('paste')
-  const [kubeconfig, setKubeconfig] = useState('')
-  const [connecting, setConnecting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
-  // Inline schedule state — seeded from config
+  // Provider selector
+  const [provider, setProvider] = useState<Provider>('kubeconfig')
+
+  // Kubeconfig paste
+  const [kubeconfig, setKubeconfig] = useState('')
+
+  // AWS EKS
+  const [awsRegion,    setAwsRegion]    = useState('us-east-1')
+  const [awsKeyId,     setAwsKeyId]     = useState('')
+  const [awsSecretKey, setAwsSecretKey] = useState('')
+  const [eksClusters,  setEksClusters]  = useState<EksCluster[]>([])
+
+  // GCP GKE
+  const [gcpProject,  setGcpProject]  = useState('')
+  const [gcpLocation, setGcpLocation] = useState('-')
+  const [gcpJson,     setGcpJson]     = useState('')
+  const [gkeClusters, setGkeClusters] = useState<GkeCluster[]>([])
+
+  // Shared cluster selection (eks or gke)
+  const [selectedCluster, setSelectedCluster] = useState('')
+  const [listingClusters, setListingClusters] = useState(false)
+
+  const [connecting, setConnecting] = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
+
+  // Schedule
   const [schedStart, setSchedStart] = useState(config.business_hours_start)
   const [schedEnd,   setSchedEnd]   = useState(config.business_hours_end)
   const [timezone,   setTimezone]   = useState(config.timezone || 'UTC')
@@ -76,12 +104,48 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
     })
   }
 
+  function switchProvider(p: Provider) {
+    setProvider(p)
+    setSelectedCluster('')
+    setEksClusters([])
+    setGkeClusters([])
+    setError(null)
+  }
+
+  async function handleListEksClusters() {
+    setListingClusters(true)
+    setError(null)
+    try {
+      const clusters = await listEksClusters(awsRegion, awsKeyId, awsSecretKey)
+      setEksClusters(clusters)
+      if (clusters.length === 0) setError('No EKS clusters found in this region')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to list clusters')
+    } finally {
+      setListingClusters(false)
+    }
+  }
+
+  async function handleListGkeClusters() {
+    setListingClusters(true)
+    setError(null)
+    try {
+      const clusters = await listGkeClusters(gcpProject, gcpLocation, gcpJson)
+      setGkeClusters(clusters)
+      if (clusters.length === 0) setError('No GKE clusters found in this project/location')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to list clusters')
+    } finally {
+      setListingClusters(false)
+    }
+  }
+
   async function handleConnect() {
-    if (!kubeconfig.trim()) return
+    if (provider === 'kubeconfig' && !kubeconfig.trim()) return
+    if (provider !== 'kubeconfig' && !selectedCluster) return
     setConnecting(true)
     setError(null)
     try {
-      // Save schedule + disable demo mode first
       const updatedConfig: ConfigData = {
         ...config,
         business_hours_start: schedStart,
@@ -93,8 +157,15 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
       const saved = await saveConfig(updatedConfig)
       onConfigChange?.(saved)
 
-      // Then connect
-      const status = await connectCluster(kubeconfig.trim())
+      let status: ControllerStatus
+      if (provider === 'kubeconfig') {
+        status = await connectCluster(kubeconfig.trim())
+      } else if (provider === 'eks') {
+        status = await connectEks(awsRegion, selectedCluster, awsKeyId, awsSecretKey)
+      } else {
+        const cluster = gkeClusters.find(c => c.name === selectedCluster)!
+        status = await connectGke(gcpProject, cluster.location, selectedCluster, gcpJson)
+      }
       onConnected(status)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Connection failed — check credentials and cluster reachability')
@@ -102,6 +173,17 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
       setConnecting(false)
     }
   }
+
+  const connectDisabled =
+    connecting ||
+    (provider === 'kubeconfig' && !kubeconfig.trim()) ||
+    (provider !== 'kubeconfig' && !selectedCluster)
+
+  const connectLabel = connecting
+    ? 'Validating credentials…'
+    : provider === 'kubeconfig'
+      ? 'Save Schedule & Connect →'
+      : `Connect to ${selectedCluster || '…'} →`
 
   return (
     <div className="connect-card" data-reveal="1">
@@ -114,10 +196,9 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
           <h2 className="connect-card-title">Connect your cluster</h2>
           <p className="connect-card-desc">
             The controller runs inside this container — no Helm chart needed.
-            Paste credentials and it connects directly to your K8s API server.
+            Paste credentials or pick your cloud provider to connect directly.
           </p>
 
-          {/* Tabs */}
           <div className="connect-tabs">
             <button
               className={`connect-tab ${tab === 'paste' ? 'active' : ''}`}
@@ -195,7 +276,6 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
             </div>
           )}
 
-          {/* Label deployments */}
           <div className="connect-deploy-note">
             <span className="connect-step-num">LABEL</span>
             <div style={{ flex: 1 }}>
@@ -210,10 +290,9 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
           </div>
         </div>
 
-        {/* ── Right: schedule + kubeconfig ── */}
+        {/* ── Right: schedule + connect ── */}
         <div className="connect-card-form">
 
-          {/* Demo mode notice */}
           {config.demo_mode && (
             <div className="connect-demo-notice">
               <span className="connect-demo-notice-tag">DEMO</span>
@@ -221,7 +300,7 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
             </div>
           )}
 
-          {/* Quick Schedule */}
+          {/* Schedule */}
           <div className="connect-schedule-block">
             <div className="connect-field-header" style={{ marginBottom: 10 }}>
               <span className="connect-field-label">Schedule</span>
@@ -264,8 +343,7 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
                   <strong>America/New_York</strong><br />
                   <strong>Europe/London</strong><br />
                   <strong>Asia/Kolkata</strong><br />
-                  <strong>Asia/Tokyo</strong><br />
-                  Full list: wikipedia.org/wiki/List_of_tz_database_time_zones
+                  <strong>Asia/Tokyo</strong>
                 </InfoTip>
               </label>
               <input
@@ -294,40 +372,203 @@ export default function ConnectCard({ config, onConnected, onConfigChange }: Pro
             </div>
           </div>
 
-          {/* Kubeconfig paste */}
+          {/* Provider selector */}
           <div style={{ marginTop: 16 }}>
-            <div className="connect-field-header" style={{ marginBottom: 6 }}>
-              <span className="connect-field-label">
-                kubeconfig YAML
-                <InfoTip>
-                  Your kubeconfig contains:<br />
-                  • <strong>server</strong> — K8s API endpoint URL<br />
-                  • <strong>token</strong> or cert — auth credentials<br /><br />
-                  Found at <code>~/.kube/config</code> or use the<br />
-                  "Need credentials" tab to generate one.
-                </InfoTip>
-              </span>
-              <span className="required-badge">REQUIRED</span>
+            <div className="connect-field-header" style={{ marginBottom: 8 }}>
+              <span className="connect-field-label">Connection method</span>
             </div>
-            <textarea
-              className="connect-kubeconfig"
-              value={kubeconfig}
-              onChange={e => setKubeconfig(e.target.value)}
-              placeholder={KUBECONFIG_PLACEHOLDER}
-              spellCheck={false}
-              autoComplete="off"
-            />
+            <div className="connect-day-pills">
+              {(['kubeconfig', 'eks', 'gke'] as Provider[]).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`connect-day-pill ${provider === p ? 'active' : ''}`}
+                  onClick={() => switchProvider(p)}
+                >
+                  {p === 'kubeconfig' ? 'Kubeconfig' : p === 'eks' ? 'AWS EKS' : 'GCP GKE'}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {error && <div className="connect-error">{error}</div>}
+          {/* Kubeconfig paste */}
+          {provider === 'kubeconfig' && (
+            <div style={{ marginTop: 12 }}>
+              <div className="connect-field-header" style={{ marginBottom: 6 }}>
+                <span className="connect-field-label">
+                  kubeconfig YAML
+                  <InfoTip>
+                    Your kubeconfig contains:<br />
+                    • <strong>server</strong> — K8s API endpoint URL<br />
+                    • <strong>token</strong> or cert — auth credentials<br /><br />
+                    Found at <code>~/.kube/config</code> or use the<br />
+                    "Need credentials" tab to generate one.
+                  </InfoTip>
+                </span>
+                <span className="required-badge">REQUIRED</span>
+              </div>
+              <textarea
+                className="connect-kubeconfig"
+                value={kubeconfig}
+                onChange={e => setKubeconfig(e.target.value)}
+                placeholder={KUBECONFIG_PLACEHOLDER}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+          )}
+
+          {/* AWS EKS form */}
+          {provider === 'eks' && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ marginBottom: 8 }}>
+                <label className="connect-sched-label">Region</label>
+                <select
+                  className="connect-sched-input-full"
+                  value={awsRegion}
+                  onChange={e => setAwsRegion(e.target.value)}
+                >
+                  {AWS_REGIONS.map(r => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label className="connect-sched-label">Access Key ID</label>
+                <input
+                  className="connect-sched-input-full"
+                  value={awsKeyId}
+                  onChange={e => setAwsKeyId(e.target.value)}
+                  placeholder="AKIA…"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label className="connect-sched-label">Secret Access Key</label>
+                <input
+                  className="connect-sched-input-full"
+                  type="password"
+                  value={awsSecretKey}
+                  onChange={e => setAwsSecretKey(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ width: '100%' }}
+                disabled={!awsKeyId || !awsSecretKey || listingClusters}
+                onClick={handleListEksClusters}
+              >
+                {listingClusters ? 'Listing clusters…' : 'List clusters →'}
+              </button>
+              {eksClusters.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <label className="connect-sched-label">Select cluster</label>
+                  <div className="connect-day-pills" style={{ marginTop: 6, flexWrap: 'wrap' }}>
+                    {eksClusters.map(c => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        className={`connect-day-pill ${selectedCluster === c.name ? 'active' : ''}`}
+                        onClick={() => setSelectedCluster(c.name)}
+                        title={`${c.kubernetes_version} · ${c.status}`}
+                      >
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* GCP GKE form */}
+          {provider === 'gke' && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ marginBottom: 8 }}>
+                <label className="connect-sched-label">Project ID</label>
+                <input
+                  className="connect-sched-input-full"
+                  value={gcpProject}
+                  onChange={e => setGcpProject(e.target.value)}
+                  placeholder="my-gcp-project"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label className="connect-sched-label">
+                  Location
+                  <InfoTip>
+                    Region or zone (e.g. <code>us-central1</code>).<br />
+                    Use <code>-</code> to list across all locations.
+                  </InfoTip>
+                </label>
+                <input
+                  className="connect-sched-input-full"
+                  value={gcpLocation}
+                  onChange={e => setGcpLocation(e.target.value)}
+                  placeholder="-"
+                  spellCheck={false}
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label className="connect-sched-label">
+                  Service Account JSON
+                  <InfoTip>
+                    Paste the full contents of your service account key JSON file.<br />
+                    Requires <code>container.clusters.list</code> and <code>container.clusters.get</code>.
+                  </InfoTip>
+                </label>
+                <textarea
+                  className="connect-kubeconfig"
+                  style={{ minHeight: 80 }}
+                  value={gcpJson}
+                  onChange={e => setGcpJson(e.target.value)}
+                  placeholder={'{ "type": "service_account", ... }'}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ width: '100%' }}
+                disabled={!gcpProject || !gcpJson || listingClusters}
+                onClick={handleListGkeClusters}
+              >
+                {listingClusters ? 'Listing clusters…' : 'List clusters →'}
+              </button>
+              {gkeClusters.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <label className="connect-sched-label">Select cluster</label>
+                  <div className="connect-day-pills" style={{ marginTop: 6, flexWrap: 'wrap' }}>
+                    {gkeClusters.map(c => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        className={`connect-day-pill ${selectedCluster === c.name ? 'active' : ''}`}
+                        onClick={() => setSelectedCluster(c.name)}
+                        title={`${c.location} · ${c.kubernetes_version}`}
+                      >
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {error && <div className="connect-error" style={{ marginTop: 10 }}>{error}</div>}
 
           <button
             className="btn-primary"
             style={{ width: '100%', marginTop: 12 }}
-            disabled={!kubeconfig.trim() || connecting}
+            disabled={connectDisabled}
             onClick={handleConnect}
           >
-            {connecting ? 'Validating credentials…' : 'Save Schedule & Connect →'}
+            {connectLabel}
           </button>
 
           <p className="connect-footnote">

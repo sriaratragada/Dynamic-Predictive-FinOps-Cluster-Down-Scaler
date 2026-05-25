@@ -104,7 +104,8 @@ export default function NodeTopology({ capacity, status: _status, savings }: Pro
   const rafRef       = useRef<number>(0)
   const settledRef   = useRef(false)
 
-  const [dims,    setDims]    = useState({ w: 900, h: 460 })
+  const FIXED_H = 460
+  const [dims,    setDims]    = useState({ w: 900, h: FIXED_H })
   const [nodes,   setNodes]   = useState<SimNode[]>([])
   const [edges,   setEdges]   = useState<Edge[]>([])
   const [tooltip, setTooltip] = useState<Tooltip | null>(null)
@@ -173,8 +174,8 @@ export default function NodeTopology({ capacity, status: _status, savings }: Pro
   useEffect(() => {
     if (!containerRef.current) return
     const ro = new ResizeObserver(([e]) => {
-      const { width, height } = e.contentRect
-      setDims({ w: Math.max(width, 300), h: Math.max(height, 340) })
+      const { width } = e.contentRect
+      setDims(d => ({ ...d, w: Math.max(width, 300) }))
       settledRef.current = false
     })
     ro.observe(containerRef.current)
@@ -245,7 +246,7 @@ export default function NodeTopology({ capacity, status: _status, savings }: Pro
   // ── Skeleton loading state ────────────────────────────────────────────────
   if (!capacity?.nodes?.length) {
     return (
-      <div className="topology-3d-wrapper" style={{ minHeight: 460, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="topology-3d-wrapper" style={{ height: FIXED_H, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div className="topo-skeleton">
           {[0, 1, 2].map(i => (
             <div key={i} className="topo-skeleton-node" style={{ animationDelay: `${i * 0.28}s` }} />
@@ -262,7 +263,7 @@ export default function NodeTopology({ capacity, status: _status, savings }: Pro
       className="topology-3d-wrapper"
       onMouseMove={onContainerMouseMove}
       onMouseLeave={onContainerMouseLeave}
-      style={{ cursor: dragId ? 'grabbing' : 'grab', minHeight: 460 }}
+      style={{ cursor: dragId ? 'grabbing' : 'grab', height: FIXED_H, overflow: 'hidden' }}
     >
       {/* Stats bar */}
       <div className="topo-stat-bar">
