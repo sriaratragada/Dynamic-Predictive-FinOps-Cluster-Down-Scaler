@@ -11,10 +11,10 @@
 ![GCP](https://img.shields.io/badge/GCP-pricing-4285F4?style=flat&logo=google-cloud&logoColor=white)
 ![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat&logo=github-actions&logoColor=white)
 
-| | | |
-|:---:|:---:|:---:|
-| **Save up to 70% overnight** | **Zero-downtime scale-up** | **Configure from the browser** |
-| Idle nodes cordoned + workloads scaled to zero during off-hours | Pre-warm fires 15 min before business hours — cluster ready on time | Live settings panel — no YAML or env vars needed |
+| | | | |
+|:---:|:---:|:---:|:---:|
+| **Save up to 70% overnight** | **Zero-downtime scale-up** | **AWS EKS + GCP GKE** | **Configure from the browser** |
+| Idle nodes cordoned + workloads scaled to zero during off-hours | Pre-warm fires 15 min before business hours — cluster ready on time | Native cloud provider connect — enter credentials, pick a cluster, done | Live settings panel — no YAML or env vars needed |
 
 ---
 
@@ -50,6 +50,7 @@ See **[SETUP.md](SETUP.md)** for all setup paths including full cluster deployme
 
 ## What it does
 
+- **☁️ Native cloud connect** — enter AWS IAM credentials to browse and connect to EKS clusters, or drop in a GCP service account JSON for GKE — no manual kubeconfig wrangling; EKS tokens auto-refresh every 13 minutes
 - **⏰ Schedule-based hibernation** — evaluates a timezone-aware business-hours window (Mon–Fri 07:00–19:00 by default) every 60 seconds
 - **🔮 Prophet ML forecasting** *(optional)* — trains a Facebook Prophet time-series model on your Prometheus history; predicts idle windows from actual usage patterns instead of a fixed clock
 - **📊 Quiet-day detection** *(optional)* — if live CPU drops below 10 % of a 7-day rolling baseline during business hours, treats it as idle (handles bank holidays automatically)
@@ -101,13 +102,7 @@ See [SETUP.md](SETUP.md) for step-by-step instructions for every path.
 
 ## Architecture
 
-See **[OVERVIEW.md](OVERVIEW.md)** for:
-- System architecture diagram (controller · dashboard · Prometheus · cloud APIs)
-- Decision algorithm flowchart (schedule → metric override → Prophet → scale action)
-- Scale-down and pre-warm sequence diagrams
-- Dashboard UI wireframe
-- Full tech stack breakdown
-- Prometheus metrics exposed
+See **[OVERVIEW.md](OVERVIEW.md)** for the decision algorithm, system architecture diagram, tech stack breakdown, and Prometheus metrics.
 
 ---
 
