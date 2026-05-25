@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ConfigData, StatusData } from '../api'
 import { saveConfig } from '../api'
-import Toggle from './Toggle'
 
 interface Props {
   config:  ConfigData
@@ -111,7 +110,7 @@ export default function DashboardConfig({ config, status, onSaved }: Props) {
         )}
 
         {/* ── 3-column config grid ── */}
-        <div className="dash-config-grid">
+        <div className="dash-config-grid dash-config-grid--2col">
 
           {/* ── Schedule ── */}
           <div className="dash-config-section">
@@ -247,76 +246,6 @@ export default function DashboardConfig({ config, status, onSaved }: Props) {
             </div>
           </div>
 
-          <div className="dash-config-divider" />
-
-          {/* ── Prediction ── */}
-          <div className="dash-config-section">
-            <div className="dash-config-header">
-              <span className="dash-config-tag">// PRED</span>
-              <span className="dash-config-title">Prediction</span>
-            </div>
-
-            <div className="dash-toggle-row">
-              <div className="dash-toggle-info">
-                <div className="dash-toggle-title">AI Pre-Warm</div>
-                <div className="dash-toggle-desc">Boot Knative containers on intent signals</div>
-              </div>
-              <Toggle checked={draft.enable_prewarm} onChange={v => set('enable_prewarm', v)} />
-            </div>
-
-            <div className="dash-toggle-row">
-              <div className="dash-toggle-info">
-                <div className="dash-toggle-title">Metric Override</div>
-                <div className="dash-toggle-desc">Quiet-day detection via Prometheus baseline</div>
-              </div>
-              <Toggle checked={draft.enable_metric_override} onChange={v => set('enable_metric_override', v)} />
-            </div>
-
-            <div className="dash-toggle-row">
-              <div className="dash-toggle-info">
-                <div className="dash-toggle-title">Prophet ML</div>
-                <div className="dash-toggle-desc">Time-series model trained on Prometheus history</div>
-              </div>
-              <Toggle checked={draft.enable_prophet} onChange={v => set('enable_prophet', v)} />
-            </div>
-
-            {draft.enable_prophet && (
-              <div className="dash-prophet-sub">
-                <div className="dash-config-field">
-                  <div className="dash-config-label">Training window (weeks)</div>
-                  <input
-                    className="dash-config-input dash-config-input--short"
-                    type="number"
-                    min="1"
-                    max="52"
-                    value={draft.prophet_training_weeks}
-                    onChange={e => set('prophet_training_weeks', parseInt(e.target.value) || 4)}
-                  />
-                </div>
-                <div className="dash-config-field">
-                  <div className="dash-config-label">Idle threshold (cores)</div>
-                  <input
-                    className="dash-config-input dash-config-input--short"
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={draft.prophet_idle_threshold_cores}
-                    onChange={e => set('prophet_idle_threshold_cores', parseFloat(e.target.value) || 0.5)}
-                  />
-                </div>
-                <div className="dash-config-field">
-                  <div className="dash-config-label">Retrain interval (hrs)</div>
-                  <input
-                    className="dash-config-input dash-config-input--short"
-                    type="number"
-                    min="1"
-                    value={draft.prophet_retrain_hours}
-                    onChange={e => set('prophet_retrain_hours', parseInt(e.target.value) || 6)}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
         </div>{/* /dash-config-grid */}
 
         {/* ── Save bar — appears when dirty ── */}

@@ -5,10 +5,12 @@ import MetricsBar          from './components/MetricsBar'
 import NodeTopology        from './components/NodeTopology'
 import DemandCapacityChart from './components/DemandCapacityChart'
 import SettingsPanel       from './components/SettingsPanel'
-import DemoBanner          from './components/DemoBanner'
 import AuditLog            from './components/AuditLog'
-import ConnectPanel        from './components/ConnectPanel'
 import DashboardConfig     from './components/DashboardConfig'
+import Nav                 from './components/Nav'
+import ClusterPage         from './components/ClusterPage'
+import FeaturesPage        from './components/FeaturesPage'
+import type { Page }       from './components/Nav'
 
 const DEFAULT_CONFIG: ConfigData = {
   prometheus_url:               'http://prometheus:9090',
@@ -35,6 +37,7 @@ const DEFAULT_CONFIG: ConfigData = {
 }
 
 export default function App() {
+  const [page,     setPage]     = useState<Page>('controller')
   const [status,   setStatus]   = useState<StatusData | null>(null)
   const [capacity, setCapacity] = useState<CapacityData | null>(null)
   const [history,  setHistory]  = useState<HistoryData | null>(null)
@@ -44,9 +47,8 @@ export default function App() {
   const [error,    setError]    = useState<string | null>(null)
   const [historyHours,  setHistoryHours]  = useState(24)
   const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null)
-  const [settingsOpen,       setSettingsOpen]       = useState(false)
-  const [connectOpen,        setConnectOpen]        = useState(false)
-  const [controllerStatus,   setControllerStatus]   = useState<ControllerStatus | null>(null)
+  const [settingsOpen,  setSettingsOpen]  = useState(false)
+  const [controllerStatus, setControllerStatus] = useState<ControllerStatus | null>(null)
 
   const pollInterval = config.poll_interval_seconds * 1000
 
@@ -57,17 +59,11 @@ export default function App() {
   const refresh = useCallback(async (hours = historyHours) => {
     try {
       const [s, c, h, sv, ev] = await Promise.all([
-        fetchStatus(),
-        fetchCapacity(),
-        fetchHistory(hours),
-        fetchSavings(),
-        fetchEvents(),
+        fetchStatus(), fetchCapacity(), fetchHistory(hours), fetchSavings(), fetchEvents(),
       ])
-      setStatus(s); setCapacity(c); setHistory(h)
-      setSavings(sv); setEvents(ev)
+      setStatus(s); setCapacity(c); setHistory(h); setSavings(sv); setEvents(ev)
       setError(null)
       setLastUpdated(new Date())
-      // Poll controller status alongside cluster data
       fetchControllerStatus().then(setControllerStatus).catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch data')
@@ -80,18 +76,12 @@ export default function App() {
     return () => clearInterval(id)
   }, [refresh, pollInterval])
 
-  const handleHoursChange = (h: number) => { setHistoryHours(h); refresh(h) }
+  const handleHoursChange  = (h: number) => { setHistoryHours(h); refresh(h) }
+  const handleConfigSaved  = (cfg: ConfigData) => { setConfig(cfg); refresh() }
 
-  const handleConfigSaved = (cfg: ConfigData) => { setConfig(cfg); refresh() }
-
-  // Cluster utilisation for the header hairline
   const clusterUtil  = capacity?.cluster_utilisation_pct ?? 0
   const clusterColor = clusterUtil >= 80 ? 'var(--red)' : clusterUtil >= 50 ? 'var(--amber)' : 'var(--green)'
-
-  // Header mode badge
-  const scaled = status?.scaled_down ?? false
-  const modeLabel = scaled ? 'HIBERNATING' : 'ACTIVE'
-  const modeCls   = scaled ? 'idle' : 'active'
+  const scaled       = status?.scaled_down ?? false
 
   return (
     <div
@@ -104,20 +94,17 @@ export default function App() {
       {/* ── Header ── */}
       <header className="header" data-reveal="0">
         <div className="header-logo">
-          <div className="header-logo-mark">
-            FINOPS<span>/</span>SCALER
-          </div>
+          <div className="header-logo-mark">FINOPS<span>/</span>SCALER</div>
           <div className="header-logo-sub">dynamic predictive down-scaler</div>
         </div>
 
         {status && (
-          <div className={`header-badge header-badge--${modeCls}`}>
+          <div className={`header-badge header-badge--${scaled ? 'idle' : 'active'}`}>
             <span style={{ fontSize: 7 }}>●</span>
-            {modeLabel}
+            {scaled ? 'HIBERNATING' : 'ACTIVE'}
           </div>
         )}
 
-        {/* Controller loop badge — only when connected via web-service mode */}
         {controllerStatus?.connected && (
           <div
             className={`header-badge header-badge--${controllerStatus.running ? 'active' : 'idle'}`}
@@ -136,68 +123,78 @@ export default function App() {
             </span>
           )}
           <div className="live-dot" />
-          {/* Connect button — prominent when not connected, subtle when connected */}
-          {!config.demo_mode && (
-            <button
-              className={`settings-btn ${controllerStatus?.connected ? 'settings-btn--connected' : 'settings-btn--connect'}`}
-              onClick={() => setConnectOpen(true)}
-              aria-label="Connect cluster"
-            >
-              {controllerStatus?.connected
-                ? `● ${controllerStatus.cluster_host || 'Connected'}`
-                : '⊕ Connect Cluster'}
-            </button>
-          )}
-          <button
-            className="settings-btn"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Open settings"
-          >
+          <button className="settings-btn" onClick={() => setSettingsOpen(true)} aria-label="Settings">
             ⚙ Settings
           </button>
         </div>
       </header>
 
-      {/* ── Demo Banner ── */}
-      {config.demo_mode && (
-        <DemoBanner
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenConnect={() => setConnectOpen(true)}
-        />
-      )}
-
-      {/* ── Error ── */}
-      {error && <div className="error-banner">{error}</div>}
-
-      {/* ── Metrics Bar ── */}
-      <MetricsBar savings={savings} status={status} />
-
-      {/* ── Dashboard Config (schedule · cloud · prediction) ── */}
-      <DashboardConfig
+      {/* ── Navigation ── */}
+      <Nav
+        page={page}
+        onChange={setPage}
         config={config}
-        status={status}
-        onSaved={handleConfigSaved}
+        controllerStatus={controllerStatus}
       />
 
-      {/* ── Node Topology ── */}
-      <div data-reveal="2">
-        <div className="section-label">Node Topology</div>
-        <NodeTopology capacity={capacity} status={status} savings={savings} />
-      </div>
+      {/* ── Error banner ── */}
+      {error && <div className="error-banner">{error}</div>}
 
-      {/* ── Demand / Capacity Chart ── */}
-      <div data-reveal="3" style={{ marginTop: 20 }}>
-        <DemandCapacityChart
-          history={history}
-          hours={historyHours}
-          onHoursChange={handleHoursChange}
-        />
-      </div>
+      {/* ══════════════════════════════════════════════
+          PAGE: Controller
+      ══════════════════════════════════════════════ */}
+      {page === 'controller' && (
+        <div key="controller">
+          <MetricsBar savings={savings} status={status} />
 
-      {/* ── Audit Log ── */}
-      <div data-reveal="4" style={{ marginTop: 20 }}>
-        <AuditLog events={events} />
-      </div>
+          <DashboardConfig
+            config={config}
+            status={status}
+            onSaved={handleConfigSaved}
+          />
+
+          <div data-reveal="2">
+            <div className="section-label">Node Topology</div>
+            <NodeTopology capacity={capacity} status={status} savings={savings} />
+          </div>
+
+          <div data-reveal="3" style={{ marginTop: 20 }}>
+            <DemandCapacityChart
+              history={history}
+              hours={historyHours}
+              onHoursChange={handleHoursChange}
+            />
+          </div>
+
+          <div data-reveal="4" style={{ marginTop: 20 }}>
+            <AuditLog events={events} />
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════
+          PAGE: Cluster
+      ══════════════════════════════════════════════ */}
+      {page === 'cluster' && (
+        <div key="cluster" style={{ paddingTop: 24 }}>
+          <ClusterPage
+            config={config}
+            controllerStatus={controllerStatus}
+            onConnected={s => { setControllerStatus(s); refresh(); setPage('controller') }}
+            onConfigChange={setConfig}
+            onControllerChange={s => { setControllerStatus(s); refresh() }}
+          />
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════
+          PAGE: Features
+      ══════════════════════════════════════════════ */}
+      {page === 'features' && (
+        <div key="features" style={{ paddingTop: 24 }}>
+          <FeaturesPage config={config} onSaved={handleConfigSaved} />
+        </div>
+      )}
 
       {/* ── Settings Drawer ── */}
       {settingsOpen && (
@@ -206,18 +203,6 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onSaved={handleConfigSaved}
           controllerStatus={controllerStatus}
-          onControllerChange={s => { setControllerStatus(s); refresh() }}
-        />
-      )}
-
-      {/* ── Connect Panel ── */}
-      {connectOpen && (
-        <ConnectPanel
-          config={config}
-          controllerStatus={controllerStatus}
-          onClose={() => setConnectOpen(false)}
-          onConnected={s => { setControllerStatus(s); setConnectOpen(false); refresh() }}
-          onConfigChange={setConfig}
           onControllerChange={s => { setControllerStatus(s); refresh() }}
         />
       )}

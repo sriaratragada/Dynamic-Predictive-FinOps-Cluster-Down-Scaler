@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ConfigData, ControllerStatus } from '../api'
 import { saveConfig, stopController } from '../api'
-import Toggle from './Toggle'
 
 interface Props {
   config: ConfigData
@@ -108,38 +107,6 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
               </button>
             </div>
           )}
-
-          {/* Connection */}
-          <section className="settings-section">
-            <div className="settings-section-header">
-              <span className="settings-section-icon">// CONN</span>
-              Connection
-            </div>
-
-            <div className="settings-toggle-row">
-              <div className="settings-toggle-info">
-                <div className="settings-toggle-title">Demo Mode</div>
-                <div className="settings-toggle-desc">Synthetic data — no K8s or Prometheus needed</div>
-              </div>
-              <Toggle checked={draft.demo_mode} onChange={v => set('demo_mode', v)} />
-            </div>
-
-            <div className="settings-field" style={{ marginTop: 14 }}>
-              <label className="settings-label">Prometheus URL</label>
-              <input
-                className="settings-input"
-                type="url"
-                value={draft.prometheus_url}
-                disabled={draft.demo_mode}
-                onChange={e => set('prometheus_url', e.target.value)}
-                placeholder="http://prometheus:9090"
-                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
-              />
-              {draft.demo_mode && (
-                <div className="settings-hint">Disabled in demo mode</div>
-              )}
-            </div>
-          </section>
 
           {/* Dashboard */}
           <section className="settings-section">
