@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass
 from typing import List
 
+from kubernetes.client.rest import ApiException
+
 logger = logging.getLogger(__name__)
 
 _ICONS = {"PASS": "✅", "WARN": "⚠️ ", "FAIL": "❌", "SKIP": "⏭ "}
@@ -157,9 +159,18 @@ class PreflightChecker:
         try:
             autoscaling_api.list_namespaced_horizontal_pod_autoscaler("kube-system")
             return CheckResult("HPA RBAC", "PASS", "autoscaling GET verb verified")
+        except ApiException as exc:
+            if exc.status == 403:
+                return CheckResult(
+                    "HPA RBAC", "FAIL",
+                    "missing autoscaling GET verb — add to ClusterRole: "
+                    "apiGroups=[autoscaling] resources=[horizontalpodautoscalers]",
+                )
+            return CheckResult("HPA RBAC", "WARN", f"inconclusive: {exc}")
         except Exception as exc:
+            # Fallback for duck-typed stubs / mocks that don't raise ApiException.
             msg = str(exc)
-            if "Forbidden" in msg or "403" in msg:
+            if "403" in msg or "Forbidden" in msg:
                 return CheckResult(
                     "HPA RBAC", "FAIL",
                     "missing autoscaling GET verb — add to ClusterRole: "
@@ -176,9 +187,18 @@ class PreflightChecker:
                 "State ConfigMap", "PASS",
                 f"{cfg.state_configmap_ns}/{cfg.state_configmap_name} exists",
             )
+        except ApiException as exc:
+            if exc.status == 404:
+                return CheckResult(
+                    "State ConfigMap", "WARN",
+                    f"{cfg.state_configmap_ns}/{cfg.state_configmap_name} not found — "
+                    "will be created on first scale-down",
+                )
+            return CheckResult("State ConfigMap", "FAIL", str(exc))
         except Exception as exc:
+            # Fallback for duck-typed stubs / mocks that don't raise ApiException.
             msg = str(exc)
-            if "Not Found" in msg or "404" in msg:
+            if "404" in msg or "Not Found" in msg:
                 return CheckResult(
                     "State ConfigMap", "WARN",
                     f"{cfg.state_configmap_ns}/{cfg.state_configmap_name} not found — "

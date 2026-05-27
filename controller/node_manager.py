@@ -6,6 +6,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from .metrics import PrometheusClient
+from .util import is_control_plane, parse_cpu
 
 if TYPE_CHECKING:
     from .state_store import StateStore
@@ -15,11 +16,6 @@ logger = logging.getLogger(__name__)
 _EVICTION_GRACE_SECONDS = 30
 _DRAIN_POLL_INTERVAL = 5
 _DRAIN_TIMEOUT = 300
-
-_CONTROL_PLANE_LABELS = {
-    "node-role.kubernetes.io/control-plane",
-    "node-role.kubernetes.io/master",
-}
 
 
 class NodeManager:
@@ -74,9 +70,8 @@ class NodeManager:
         underutil = []
         for node in self._core.list_node().items:
             name = node.metadata.name
-            labels = node.metadata.labels or {}
 
-            if any(lbl in labels for lbl in _CONTROL_PLANE_LABELS):
+            if is_control_plane(node):
                 continue  # never touch control-plane nodes
 
             # ── GPU-aware path ────────────────────────────────────────────────
@@ -96,7 +91,7 @@ class NodeManager:
                 continue  # handled; skip CPU check below
 
             # ── CPU path (all non-GPU nodes) ──────────────────────────────────
-            allocatable_cpu = _parse_cpu(
+            allocatable_cpu = parse_cpu(
                 (node.status.allocatable or {}).get("cpu", "1")
             )
             used_cpu = cpu_map.get(name, 0.0)
@@ -185,6 +180,7 @@ class NodeManager:
 
     def _wait_for_drain(self, node_name: str):
         deadline = _time.monotonic() + _DRAIN_TIMEOUT
+        remaining: List[client.V1Pod] = []  # ensure defined if the loop never runs
         while _time.monotonic() < deadline:
             remaining = [
                 p
@@ -216,13 +212,6 @@ def _is_daemonset_pod(pod: client.V1Pod) -> bool:
 
 def _is_mirror_pod(pod: client.V1Pod) -> bool:
     return "kubernetes.io/config.mirror" in (pod.metadata.annotations or {})
-
-
-def _parse_cpu(cpu_str: str) -> float:
-    """Convert a Kubernetes CPU string ('500m', '2') to float cores."""
-    if cpu_str.endswith("m"):
-        return int(cpu_str[:-1]) / 1000.0
-    return float(cpu_str)
 
 
 def _is_gpu_node(node: client.V1Node) -> bool:

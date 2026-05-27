@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from kubernetes.client import V1Lease, V1LeaseSpec, V1ObjectMeta
+from kubernetes.client.rest import ApiException
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +127,16 @@ class LeaderElector:
         now = datetime.now(timezone.utc)
         try:
             lease = self._api.read_namespaced_lease(LEASE_NAME, self._ns)
-        except Exception as exc:
-            if "Not Found" in str(exc) or "404" in str(exc):
+        except ApiException as exc:
+            if exc.status == 404:
                 # Lease doesn't exist yet — race to create it
+                return self._create_lease(now)
+            logger.warning("Leader election: error reading lease: %s", exc)
+            return False
+        except Exception as exc:
+            # Demo stub raises RuntimeError("404 Not Found") instead of ApiException;
+            # keep a single string-match fallback for that case so tests keep working.
+            if "404" in str(exc) or "Not Found" in str(exc):
                 return self._create_lease(now)
             logger.warning("Leader election: error reading lease: %s", exc)
             return False

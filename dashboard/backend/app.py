@@ -4,7 +4,7 @@ import os
 import pathlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -60,7 +60,9 @@ async def _lifespan(app: FastAPI):
 
     yield  # application runs here
 
-    # Shutdown — nothing to clean up explicitly
+    # Shutdown — stop the savings tracker cleanly
+    if _tracker is not None:
+        _tracker.stop()
 
 
 app = FastAPI(
@@ -72,35 +74,45 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()],
     allow_methods=["GET", "PATCH", "POST"],
     allow_headers=["*"],
 )
 
 
 # ------------------------------------------------------------------
-# Prometheus helpers  (read prometheus_url + demo_mode from config_store)
+# Prometheus helpers — read prometheus_url + demo_mode from config_store
 # ------------------------------------------------------------------
 
-async def _prom_instant(query: str) -> list:
-    cfg = config_store.get()
-    if cfg.demo_mode:
-        from .demo_stub import demo_prom_instant  # noqa: PLC0415
-        return demo_prom_instant(query)
-    async with httpx.AsyncClient(timeout=10) as c:
-        r = await c.get(f"{cfg.prometheus_url}/api/v1/query", params={"query": query})
-        r.raise_for_status()
-        data = r.json()
-        if data["status"] != "success":
-            raise ValueError(data.get("error", "Prometheus error"))
-        return data["data"]["result"]
+async def _prom_query(
+    query: str,
+    range_hours: Optional[int] = None,
+) -> list:
+    """Single helper for both instant and range queries.
 
-
-async def _prom_range(query: str, hours: int) -> list:
+    When ``range_hours`` is None this hits ``/api/v1/query``; otherwise it
+    hits ``/api/v1/query_range`` with a step derived to give ~200 samples.
+    Honours demo mode and reads prometheus_url live from config_store.
+    """
     cfg = config_store.get()
+
+    if range_hours is None:
+        if cfg.demo_mode:
+            from .demo_stub import demo_prom_instant  # noqa: PLC0415
+            return demo_prom_instant(query)
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{cfg.prometheus_url}/api/v1/query", params={"query": query}
+            )
+            r.raise_for_status()
+            data = r.json()
+            if data["status"] != "success":
+                raise ValueError(data.get("error", "Prometheus error"))
+            return data["data"]["result"]
+
     end = int(datetime.now(tz=timezone.utc).timestamp())
-    start = end - hours * 3600
-    step = max(300, (hours * 3600) // 200)
+    start = end - range_hours * 3600
+    step = max(300, (range_hours * 3600) // 200)
     if cfg.demo_mode:
         from .demo_stub import demo_prom_range  # noqa: PLC0415
         return demo_prom_range(query, start, end, step)
@@ -114,6 +126,15 @@ async def _prom_range(query: str, hours: int) -> list:
         if data["status"] != "success":
             raise ValueError(data.get("error", "Prometheus range error"))
         return data["data"]["result"]
+
+
+# Thin BC-friendly wrappers — tests / external code might import these names.
+async def _prom_instant(query: str) -> list:
+    return await _prom_query(query)
+
+
+async def _prom_range(query: str, hours: int) -> list:
+    return await _prom_query(query, range_hours=hours)
 
 
 # ------------------------------------------------------------------
@@ -150,7 +171,7 @@ async def api_prewarm(request: Request, _: None = Depends(require_token)):
         user_id      str   (optional) Opaque user identifier for log correlation
 
     Returns:
-        status  "warm" | "warming" | "cold"
+        status  "warm" | "warming" | "cold" | "rejected" | "debounced" | "cooldown" | "rate_limited"
         action  "none" | "prewarm_triggered"
 
     Disabled (returns {enabled: false}) when config.enable_prewarm is false.
@@ -206,7 +227,7 @@ async def api_capacity():
 
     cpu_map: dict = {}
     try:
-        results = await _prom_instant(
+        results = await _prom_query(
             'sum by (node) (rate(container_cpu_usage_seconds_total{container!=""}[5m]))'
         )
         cpu_map = {r["metric"].get("node", ""): float(r["value"][1]) for r in results}
@@ -238,54 +259,41 @@ async def api_capacity():
     }
 
 
+_HISTORY_QUERIES = (
+    ("cpu_used",
+     'sum(rate(container_cpu_usage_seconds_total{container!=""}[5m]))',
+     "value"),
+    ("cpu_capacity",
+     'sum(kube_node_status_allocatable{resource="cpu"})',
+     "value"),
+    ("scaledown_events",
+     "increase(finops_scaledown_events_total[5m])",
+     "marker"),
+    ("scaleup_events",
+     "increase(finops_scaleup_events_total[5m])",
+     "marker"),
+)
+
+
 @app.get("/api/history")
 async def api_history(hours: int = 24):
-    cpu_used: list = []
-    cpu_cap: list = []
-    sd_events: list = []
-    su_events: list = []
-
-    try:
-        results = await _prom_range(
-            'sum(rate(container_cpu_usage_seconds_total{container!=""}[5m]))', hours
-        )
-        if results:
-            cpu_used = [{"t": int(ts * 1000), "v": round(float(v), 3)}
-                        for ts, v in results[0]["values"]]
-    except Exception as exc:
-        logger.warning("History CPU query failed: %s", exc)
-
-    try:
-        results = await _prom_range(
-            'sum(kube_node_status_allocatable{resource="cpu"})', hours
-        )
-        if results:
-            cpu_cap = [{"t": int(ts * 1000), "v": round(float(v), 2)}
-                       for ts, v in results[0]["values"]]
-    except Exception as exc:
-        logger.warning("History capacity query failed: %s", exc)
-
-    try:
-        results = await _prom_range("increase(finops_scaledown_events_total[5m])", hours)
-        if results:
-            sd_events = [int(ts * 1000) for ts, v in results[0]["values"] if float(v) > 0]
-    except Exception as exc:
-        logger.warning("Scale-down event query failed: %s", exc)
-
-    try:
-        results = await _prom_range("increase(finops_scaleup_events_total[5m])", hours)
-        if results:
-            su_events = [int(ts * 1000) for ts, v in results[0]["values"] if float(v) > 0]
-    except Exception as exc:
-        logger.warning("Scale-up event query failed: %s", exc)
-
-    return {
-        "cpu_used": cpu_used,
-        "cpu_capacity": cpu_cap,
-        "scaledown_events": sd_events,
-        "scaleup_events": su_events,
-        "hours": hours,
-    }
+    """Return CPU usage, capacity, and scale-event markers over the last *hours*."""
+    out: dict[str, Any] = {"hours": hours}
+    for key, promql, kind in _HISTORY_QUERIES:
+        try:
+            results = await _prom_query(promql, range_hours=hours)
+        except Exception as exc:
+            logger.warning("History query %s failed: %s", key, exc)
+            out[key] = []
+            continue
+        values = results[0]["values"] if results else []
+        if kind == "value":
+            out[key] = [
+                {"t": int(ts * 1000), "v": round(float(v), 3)} for ts, v in values
+            ]
+        else:  # marker
+            out[key] = [int(ts * 1000) for ts, v in values if float(v) > 0]
+    return out
 
 
 @app.get("/api/events")
@@ -309,7 +317,7 @@ async def api_events():
         return {"events": []}
 
     # Most recent first
-    return {"events": list(reversed(_tracker._events))}
+    return {"events": list(reversed(_tracker.list_events()))}
 
 
 @app.get("/api/savings")
@@ -317,7 +325,7 @@ async def api_savings():
     cfg = config_store.get()
 
     if cfg.demo_mode:
-        from .demo_stub import _historical_events, _SEED_TOTAL_SAVED  # noqa: PLC0415
+        from .demo_stub import _historical_events, _SEED_TOTAL_SAVED, _is_active  # noqa: PLC0415
         now = datetime.now(tz=timezone.utc)
         events = _historical_events()
         week_ago = now.timestamp() - 7 * 86400
@@ -330,7 +338,6 @@ async def api_savings():
             e["saved_usd"] for e in events
             if e.get("end") and datetime.fromisoformat(e["end"]).timestamp() >= month_ago
         )
-        from .demo_stub import _is_active  # noqa: PLC0415
         cordoned = 0 if _is_active(now) else 2
         running_cost = cordoned * cfg.node_hourly_cost * 0.5
         return {
@@ -371,82 +378,81 @@ async def api_savings():
 # Web-service: cluster connect / controller management
 # ------------------------------------------------------------------
 
+async def _activate_cluster(core_v1, apps_v1) -> None:
+    """Shared post-connect setup used by every connect endpoint.
+
+    Re-points the dashboard's K8s reader at the new cluster, restarts the
+    savings tracker cleanly (stopping the old one to avoid a thread leak),
+    switches the dashboard out of demo mode, and starts the embedded loop.
+    """
+    global _k8s, _tracker
+
+    _k8s = K8sReader(core_v1=core_v1, apps_v1=apps_v1)
+
+    if _tracker is not None:
+        _tracker.stop()  # cooperative cancellation — old task exits cleanly
+    _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
+    asyncio.create_task(_tracker.start())
+
+    config_store.patch({"demo_mode": False})
+
+    runner = _get_runner()
+    await asyncio.to_thread(runner.start, 60)
+
+
+def _require_fields(body: dict, *fields: str) -> dict:
+    """Strip & validate required JSON body fields. Raises HTTPException(422) if missing."""
+    out: dict[str, str] = {}
+    missing: list[str] = []
+    for f in fields:
+        v = (body.get(f) or "").strip() if isinstance(body.get(f), str) else body.get(f)
+        if not v:
+            missing.append(f)
+        else:
+            out[f] = v
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"required fields: {', '.join(missing)}",
+        )
+    return out
+
+
 @app.post("/api/connect")
 async def api_connect(request: Request, _: None = Depends(require_token)):
     """
     Accept a kubeconfig YAML string, validate it by listing nodes, then
-    start the embedded controller loop.  On success the K8sReader and
-    SavingsTracker are re-initialised against the new cluster.
+    start the embedded controller loop.
 
     Body (JSON):
         kubeconfig  str  Full kubeconfig YAML (same as ~/.kube/config)
-
-    Returns the controller status object.
     """
-    global _k8s, _tracker
-
     body = await request.json()
-    kubeconfig_str: str = (body.get("kubeconfig") or "").strip()
-    if not kubeconfig_str:
-        raise HTTPException(status_code=422, detail="kubeconfig is required")
+    fields = _require_fields(body, "kubeconfig")
 
     runner = _get_runner()
-
-    # connect() is synchronous (blocking I/O) — run in thread pool
-    loop = asyncio.get_event_loop()
     try:
-        core_v1, apps_v1 = await loop.run_in_executor(
-            None, runner.connect, kubeconfig_str
-        )
+        core_v1, apps_v1 = await asyncio.to_thread(runner.connect, fields["kubeconfig"])
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cluster unreachable: {exc}") from exc
 
-    # Re-initialise the dashboard's K8s reader with the connected clients
-    _k8s = K8sReader(core_v1=core_v1, apps_v1=apps_v1)
-
-    # Restart the savings tracker
-    if _tracker is not None:
-        _tracker._stop = True
-    _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
-    asyncio.create_task(_tracker.start())
-
-    # Switch out of demo mode so real routes are used
-    config_store.patch({"demo_mode": False})
-
-    # Start the embedded controller loop
-    await loop.run_in_executor(None, lambda: runner.start(60))
-
+    await _activate_cluster(core_v1, apps_v1)
     logger.info("Web-service mode: controller started, K8sReader re-initialised")
     return runner.status().as_dict()
 
 
 @app.post("/api/aws/clusters")
 async def api_aws_clusters(request: Request, _: None = Depends(require_token)):
-    """
-    List EKS clusters in the given region using explicit AWS credentials.
-
-    Body (JSON):
-        region            str  AWS region (e.g. "us-east-1")
-        access_key_id     str  AWS access key ID
-        secret_access_key str  AWS secret access key
-    """
+    """List EKS clusters in the given region using explicit AWS credentials."""
     from . import cloud_providers  # noqa: PLC0415
 
     body = await request.json()
-    region            = (body.get("region")            or "").strip()
-    access_key_id     = (body.get("access_key_id")     or "").strip()
-    secret_access_key = (body.get("secret_access_key") or "").strip()
+    f = _require_fields(body, "region", "access_key_id", "secret_access_key")
 
-    if not all([region, access_key_id, secret_access_key]):
-        raise HTTPException(
-            status_code=422,
-            detail="region, access_key_id, and secret_access_key are required",
-        )
-
-    loop = asyncio.get_event_loop()
     try:
-        clusters = await loop.run_in_executor(
-            None, cloud_providers.list_eks_clusters, region, access_key_id, secret_access_key
+        clusters = await asyncio.to_thread(
+            cloud_providers.list_eks_clusters,
+            f["region"], f["access_key_id"], f["secret_access_key"],
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"AWS error: {exc}") from exc
@@ -456,31 +462,17 @@ async def api_aws_clusters(request: Request, _: None = Depends(require_token)):
 
 @app.post("/api/gcp/clusters")
 async def api_gcp_clusters(request: Request, _: None = Depends(require_token)):
-    """
-    List GKE clusters using a GCP service account JSON string.
-
-    Body (JSON):
-        project_id           str  GCP project ID
-        location             str  Region or zone (use "-" for all locations)
-        service_account_json str  Full service account JSON key file contents
-    """
+    """List GKE clusters using a GCP service account JSON string."""
     from . import cloud_providers  # noqa: PLC0415
 
     body = await request.json()
-    project_id           = (body.get("project_id")           or "").strip()
-    location             = (body.get("location")             or "-").strip()
-    service_account_json = (body.get("service_account_json") or "").strip()
+    f = _require_fields(body, "project_id", "service_account_json")
+    location = (body.get("location") or "-").strip() or "-"
 
-    if not all([project_id, service_account_json]):
-        raise HTTPException(
-            status_code=422,
-            detail="project_id and service_account_json are required",
-        )
-
-    loop = asyncio.get_event_loop()
     try:
-        clusters = await loop.run_in_executor(
-            None, cloud_providers.list_gke_clusters, project_id, location, service_account_json
+        clusters = await asyncio.to_thread(
+            cloud_providers.list_gke_clusters,
+            f["project_id"], location, f["service_account_json"],
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"GCP error: {exc}") from exc
@@ -490,129 +482,70 @@ async def api_gcp_clusters(request: Request, _: None = Depends(require_token)):
 
 @app.post("/api/connect/eks")
 async def api_connect_eks(request: Request, _: None = Depends(require_token)):
-    """
-    Connect to an EKS cluster using explicit AWS credentials, then start the
-    embedded controller loop.
-
-    Body (JSON):
-        region            str  AWS region
-        cluster_name      str  EKS cluster name
-        access_key_id     str  AWS access key ID
-        secret_access_key str  AWS secret access key
-    """
-    global _k8s, _tracker
+    """Connect to an EKS cluster using explicit AWS credentials, then start the embedded controller loop."""
     from . import cloud_providers  # noqa: PLC0415
 
     body = await request.json()
-    region            = (body.get("region")            or "").strip()
-    cluster_name      = (body.get("cluster_name")      or "").strip()
-    access_key_id     = (body.get("access_key_id")     or "").strip()
-    secret_access_key = (body.get("secret_access_key") or "").strip()
-
-    if not all([region, cluster_name, access_key_id, secret_access_key]):
-        raise HTTPException(
-            status_code=422,
-            detail="region, cluster_name, access_key_id, and secret_access_key are required",
-        )
-
-    loop = asyncio.get_event_loop()
+    f = _require_fields(body, "region", "cluster_name", "access_key_id", "secret_access_key")
 
     try:
-        kubeconfig_str = await loop.run_in_executor(
-            None,
+        kubeconfig_str = await asyncio.to_thread(
             cloud_providers.kubeconfig_from_eks,
-            cluster_name, region, access_key_id, secret_access_key,
+            f["cluster_name"], f["region"], f["access_key_id"], f["secret_access_key"],
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"EKS kubeconfig error: {exc}") from exc
 
     runner = _get_runner()
     try:
-        core_v1, apps_v1 = await loop.run_in_executor(None, runner.connect, kubeconfig_str)
+        core_v1, apps_v1 = await asyncio.to_thread(runner.connect, kubeconfig_str)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cluster unreachable: {exc}") from exc
 
-    # Store credentials for EKS token refresh (Session 3)
+    # Store credentials for STS token auto-refresh
     runner.set_cloud_creds("eks", {
-        "region": region,
-        "cluster_name": cluster_name,
-        "access_key_id": access_key_id,
-        "secret_access_key": secret_access_key,
+        "region": f["region"],
+        "cluster_name": f["cluster_name"],
+        "access_key_id": f["access_key_id"],
+        "secret_access_key": f["secret_access_key"],
     })
 
-    _k8s = K8sReader(core_v1=core_v1, apps_v1=apps_v1)
-    if _tracker is not None:
-        _tracker._stop = True
-    _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
-    asyncio.create_task(_tracker.start())
-    config_store.patch({"demo_mode": False})
-    await loop.run_in_executor(None, lambda: runner.start(60))
-
-    logger.info("EKS cluster connected: %s (%s)", cluster_name, region)
+    await _activate_cluster(core_v1, apps_v1)
+    logger.info("EKS cluster connected: %s (%s)", f["cluster_name"], f["region"])
     return runner.status().as_dict()
 
 
 @app.post("/api/connect/gke")
 async def api_connect_gke(request: Request, _: None = Depends(require_token)):
-    """
-    Connect to a GKE cluster using a GCP service account JSON string, then
-    start the embedded controller loop.
-
-    Body (JSON):
-        project_id           str  GCP project ID
-        location             str  Region or zone (e.g. "us-central1")
-        cluster_name         str  GKE cluster name
-        service_account_json str  Full service account JSON key file contents
-    """
-    global _k8s, _tracker
+    """Connect to a GKE cluster using a GCP service account JSON string, then start the embedded controller loop."""
     from . import cloud_providers  # noqa: PLC0415
 
     body = await request.json()
-    project_id           = (body.get("project_id")           or "").strip()
-    location             = (body.get("location")             or "").strip()
-    cluster_name         = (body.get("cluster_name")         or "").strip()
-    service_account_json = (body.get("service_account_json") or "").strip()
-
-    if not all([project_id, location, cluster_name, service_account_json]):
-        raise HTTPException(
-            status_code=422,
-            detail="project_id, location, cluster_name, and service_account_json are required",
-        )
-
-    loop = asyncio.get_event_loop()
+    f = _require_fields(body, "project_id", "location", "cluster_name", "service_account_json")
 
     try:
-        kubeconfig_str = await loop.run_in_executor(
-            None,
+        kubeconfig_str = await asyncio.to_thread(
             cloud_providers.kubeconfig_from_gke,
-            project_id, location, cluster_name, service_account_json,
+            f["project_id"], f["location"], f["cluster_name"], f["service_account_json"],
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"GKE kubeconfig error: {exc}") from exc
 
     runner = _get_runner()
     try:
-        core_v1, apps_v1 = await loop.run_in_executor(None, runner.connect, kubeconfig_str)
+        core_v1, apps_v1 = await asyncio.to_thread(runner.connect, kubeconfig_str)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cluster unreachable: {exc}") from exc
 
-    # Store credentials for future GKE token refresh
     runner.set_cloud_creds("gke", {
-        "project_id": project_id,
-        "location": location,
-        "cluster_name": cluster_name,
-        "service_account_json": service_account_json,
+        "project_id": f["project_id"],
+        "location": f["location"],
+        "cluster_name": f["cluster_name"],
+        "service_account_json": f["service_account_json"],
     })
 
-    _k8s = K8sReader(core_v1=core_v1, apps_v1=apps_v1)
-    if _tracker is not None:
-        _tracker._stop = True
-    _tracker = SavingsTracker(_k8s, pricing.get_hourly_rate)
-    asyncio.create_task(_tracker.start())
-    config_store.patch({"demo_mode": False})
-    await loop.run_in_executor(None, lambda: runner.start(60))
-
-    logger.info("GKE cluster connected: %s (%s/%s)", cluster_name, project_id, location)
+    await _activate_cluster(core_v1, apps_v1)
+    logger.info("GKE cluster connected: %s (%s/%s)", f["cluster_name"], f["project_id"], f["location"])
     return runner.status().as_dict()
 
 
@@ -626,8 +559,7 @@ async def api_controller_status():
 async def api_controller_stop(_: None = Depends(require_token)):
     """Stop the embedded controller loop (does not disconnect from the cluster)."""
     runner = _get_runner()
-    loop   = asyncio.get_event_loop()
-    await loop.run_in_executor(None, runner.stop)
+    await asyncio.to_thread(runner.stop)
     return runner.status().as_dict()
 
 

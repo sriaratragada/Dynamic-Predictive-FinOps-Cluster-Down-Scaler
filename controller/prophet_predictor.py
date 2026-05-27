@@ -49,7 +49,6 @@ class ProphetPredictor:
         """Minutes until the forecast first crosses above the idle threshold."""
         if self._forecast_df is None:
             return None
-        import pandas as pd  # noqa: F401 — imported for type inference only
         now_naive = now.replace(tzinfo=None) if now.tzinfo is not None else now
         future = self._forecast_df[self._forecast_df["ds"] >= now_naive]
         active = future[future["yhat"] >= self._cfg.prophet_idle_threshold_cores]

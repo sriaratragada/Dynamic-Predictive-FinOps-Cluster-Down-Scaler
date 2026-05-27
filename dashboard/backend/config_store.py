@@ -4,14 +4,57 @@ Mutable runtime configuration for the dashboard backend.
 Initialises from environment variables; individual fields can be hot-patched
 at runtime via PATCH /api/config without restarting the process.
 Pricing-related changes automatically invalidate the pricing cache.
+
+Note
+----
+A subset of these settings (schedule, prophet, namespace filter, etc.)
+mirrors ``controller/config.py`` by design — the dashboard backend is
+intentionally self-contained and does not import the controller package
+so each Docker image can ship without the other.  Keep defaults in
+sync with ``.env.example``.
 """
 import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict
 
 
-def _bool(val: str) -> bool:
-    return val.strip().lower() == "true"
+# ── Env-var coercion helpers ──────────────────────────────────────────────────
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() == "true"
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_str(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    return raw if raw is not None else default
+
+
+# Defaults — keep in sync with .env.example and controller/config.py.
+DEFAULT_NODE_HOURLY_COST = 0.192
+DEFAULT_BUSINESS_DAYS    = "0,1,2,3,4"
 
 
 @dataclass
@@ -24,12 +67,12 @@ class DashboardConfig:
     cloud_provider: str = "manual"   # aws | gcp | manual
     instance_type: str = ""
     aws_region: str = ""
-    node_hourly_cost: float = 0.192
+    node_hourly_cost: float = DEFAULT_NODE_HOURLY_COST
 
     # ── Schedule (controller settings — displayed for reference) ──────
     business_hours_start: str = "07:00"
     business_hours_end: str = "19:00"
-    business_days: str = "0,1,2,3,4"   # comma-separated 0=Mon…6=Sun
+    business_days: str = DEFAULT_BUSINESS_DAYS   # comma-separated 0=Mon…6=Sun
     timezone: str = "UTC"
     prewarm_minutes: int = 15
 
@@ -55,26 +98,26 @@ class DashboardConfig:
 
 
 _cfg = DashboardConfig(
-    prometheus_url=os.environ.get("PROMETHEUS_URL", "http://prometheus:9090"),
-    demo_mode=_bool(os.environ.get("DEMO_MODE", "false")),
-    cloud_provider=os.environ.get("CLOUD_PROVIDER", "manual"),
-    instance_type=os.environ.get("NODE_INSTANCE_TYPE", ""),
-    aws_region=os.environ.get("AWS_REGION", ""),
-    node_hourly_cost=float(os.environ.get("NODE_HOURLY_COST", "0.192")),
-    business_hours_start=os.environ.get("BUSINESS_HOURS_START", "07:00"),
-    business_hours_end=os.environ.get("BUSINESS_HOURS_END", "19:00"),
-    business_days=os.environ.get("BUSINESS_DAYS", "0,1,2,3,4"),
-    timezone=os.environ.get("TIMEZONE", "UTC"),
-    prewarm_minutes=int(os.environ.get("PREWARM_MINUTES", "15")),
-    enable_metric_override=_bool(os.environ.get("ENABLE_METRIC_OVERRIDE", "false")),
-    enable_prophet=_bool(os.environ.get("ENABLE_PROPHET", "false")),
-    prophet_training_weeks=int(os.environ.get("PROPHET_TRAINING_WEEKS", "4")),
-    prophet_idle_threshold_cores=float(os.environ.get("PROPHET_IDLE_THRESHOLD_CORES", "0.5")),
-    prophet_retrain_hours=int(os.environ.get("PROPHET_RETRAIN_HOURS", "6")),
-    node_utilisation_threshold=float(os.environ.get("NODE_UTILISATION_THRESHOLD", "0.10")),
-    namespace_filter=os.environ.get("NAMESPACE_FILTER", ""),
-    min_replica_floor=int(os.environ.get("MIN_REPLICA_FLOOR", "0")),
-    enable_prewarm=_bool(os.environ.get("ENABLE_PREWARM", "false")),
+    prometheus_url               = _env_str("PROMETHEUS_URL",        "http://prometheus:9090"),
+    demo_mode                    = _env_bool("DEMO_MODE",             False),
+    cloud_provider               = _env_str("CLOUD_PROVIDER",         "manual"),
+    instance_type                = _env_str("NODE_INSTANCE_TYPE",     ""),
+    aws_region                   = _env_str("AWS_REGION",             ""),
+    node_hourly_cost             = _env_float("NODE_HOURLY_COST",     DEFAULT_NODE_HOURLY_COST),
+    business_hours_start         = _env_str("BUSINESS_HOURS_START",  "07:00"),
+    business_hours_end           = _env_str("BUSINESS_HOURS_END",    "19:00"),
+    business_days                = _env_str("BUSINESS_DAYS",          DEFAULT_BUSINESS_DAYS),
+    timezone                     = _env_str("TIMEZONE",               "UTC"),
+    prewarm_minutes              = _env_int("PREWARM_MINUTES",        15),
+    enable_metric_override       = _env_bool("ENABLE_METRIC_OVERRIDE", False),
+    enable_prophet               = _env_bool("ENABLE_PROPHET",         False),
+    prophet_training_weeks       = _env_int("PROPHET_TRAINING_WEEKS",  4),
+    prophet_idle_threshold_cores = _env_float("PROPHET_IDLE_THRESHOLD_CORES", 0.5),
+    prophet_retrain_hours        = _env_int("PROPHET_RETRAIN_HOURS",   6),
+    node_utilisation_threshold   = _env_float("NODE_UTILISATION_THRESHOLD", 0.10),
+    namespace_filter             = _env_str("NAMESPACE_FILTER",        ""),
+    min_replica_floor            = _env_int("MIN_REPLICA_FLOOR",       0),
+    enable_prewarm               = _env_bool("ENABLE_PREWARM",         False),
 )
 
 _PRICING_KEYS = {"cloud_provider", "instance_type", "aws_region", "node_hourly_cost"}

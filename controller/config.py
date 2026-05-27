@@ -1,10 +1,56 @@
+"""
+Controller startup configuration.
+
+Reads environment variables once at import time and freezes them into a
+``Config`` dataclass.  All values have safe production-ready defaults so a
+fresh ``python -m controller.main`` boots in demo-friendly mode without any
+explicit env configuration.
+
+Defaults are documented inline next to each field; the canonical operator-
+facing reference is ``.env.example``.
+"""
 import os
 from dataclasses import dataclass
 from typing import List
 
 
-def _parse_days(val: str) -> List[int]:
-    return [int(d.strip()) for d in val.split(",") if d.strip()]
+# ── Env-var coercion helpers ──────────────────────────────────────────────────
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() == "true"
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_str(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    return raw if raw is not None else default
+
+
+def _env_days(name: str, default: str) -> List[int]:
+    raw = os.environ.get(name, default)
+    return [int(d.strip()) for d in raw.split(",") if d.strip()]
 
 
 @dataclass
@@ -64,34 +110,34 @@ class Config:
 
 def load_config() -> Config:
     return Config(
-        prometheus_url=os.environ.get("PROMETHEUS_URL", "http://prometheus:9090"),
-        business_hours_start=os.environ.get("BUSINESS_HOURS_START", "07:00"),
-        business_hours_end=os.environ.get("BUSINESS_HOURS_END", "19:00"),
-        business_days=_parse_days(os.environ.get("BUSINESS_DAYS", "0,1,2,3,4")),
-        prewarm_minutes=int(os.environ.get("PREWARM_MINUTES", "15")),
-        loop_interval_seconds=int(os.environ.get("LOOP_INTERVAL_SECONDS", "60")),
-        namespace_filter=os.environ.get("NAMESPACE_FILTER", ""),
-        min_replica_floor=int(os.environ.get("MIN_REPLICA_FLOOR", "0")),
-        node_utilisation_threshold=float(os.environ.get("NODE_UTILISATION_THRESHOLD", "0.10")),
-        state_configmap_name=os.environ.get("STATE_CONFIGMAP_NAME", "finops-scaler-state"),
-        state_configmap_ns=os.environ.get("STATE_CONFIGMAP_NS", "kube-system"),
-        timezone=os.environ.get("TIMEZONE", "UTC"),
-        enable_metric_override=os.environ.get("ENABLE_METRIC_OVERRIDE", "false").lower() == "true",
-        dry_run=os.environ.get("DRY_RUN", "false").lower() == "true",
-        metrics_port=int(os.environ.get("METRICS_PORT", "8080")),
-        enable_prophet=os.environ.get("ENABLE_PROPHET", "false").lower() == "true",
-        prophet_training_weeks=int(os.environ.get("PROPHET_TRAINING_WEEKS", "4")),
-        prophet_idle_threshold_cores=float(os.environ.get("PROPHET_IDLE_THRESHOLD_CORES", "0.5")),
-        prophet_retrain_hours=int(os.environ.get("PROPHET_RETRAIN_HOURS", "6")),
-        enable_gpu_aware=os.environ.get("ENABLE_GPU_AWARE", "false").lower() == "true",
-        gpu_idle_threshold=float(os.environ.get("GPU_IDLE_THRESHOLD", "0.10")),
-        enable_hpa_suspend=os.environ.get("ENABLE_HPA_SUSPEND", "true").lower() == "true",
-        enable_auto_label=os.environ.get("ENABLE_AUTO_LABEL", "false").lower() == "true",
-        enable_k8s_events=os.environ.get("ENABLE_K8S_EVENTS", "true").lower() == "true",
-        webhook_url=os.environ.get("WEBHOOK_URL", ""),
-        cluster_name=os.environ.get("CLUSTER_NAME", ""),
-        enable_leader_election=os.environ.get("ENABLE_LEADER_ELECTION", "true").lower() == "true",
-        leader_lease_duration=int(os.environ.get("LEADER_LEASE_DURATION", "30")),
-        enable_preflight=os.environ.get("ENABLE_PREFLIGHT", "true").lower() == "true",
-        acknowledge_state_loss=os.environ.get("ACKNOWLEDGE_STATE_LOSS", "false").lower() == "true",
+        prometheus_url             = _env_str("PROMETHEUS_URL",        "http://prometheus:9090"),
+        business_hours_start       = _env_str("BUSINESS_HOURS_START",  "07:00"),
+        business_hours_end         = _env_str("BUSINESS_HOURS_END",    "19:00"),
+        business_days              = _env_days("BUSINESS_DAYS",        "0,1,2,3,4"),
+        prewarm_minutes            = _env_int("PREWARM_MINUTES",        15),
+        loop_interval_seconds      = _env_int("LOOP_INTERVAL_SECONDS",  60),
+        namespace_filter           = _env_str("NAMESPACE_FILTER",       ""),
+        min_replica_floor          = _env_int("MIN_REPLICA_FLOOR",      0),
+        node_utilisation_threshold = _env_float("NODE_UTILISATION_THRESHOLD", 0.10),
+        state_configmap_name       = _env_str("STATE_CONFIGMAP_NAME",  "finops-scaler-state"),
+        state_configmap_ns         = _env_str("STATE_CONFIGMAP_NS",    "kube-system"),
+        timezone                   = _env_str("TIMEZONE",               "UTC"),
+        enable_metric_override     = _env_bool("ENABLE_METRIC_OVERRIDE", False),
+        dry_run                    = _env_bool("DRY_RUN",                False),
+        metrics_port               = _env_int("METRICS_PORT",            8080),
+        enable_prophet             = _env_bool("ENABLE_PROPHET",         False),
+        prophet_training_weeks     = _env_int("PROPHET_TRAINING_WEEKS",  4),
+        prophet_idle_threshold_cores = _env_float("PROPHET_IDLE_THRESHOLD_CORES", 0.5),
+        prophet_retrain_hours      = _env_int("PROPHET_RETRAIN_HOURS",   6),
+        enable_gpu_aware           = _env_bool("ENABLE_GPU_AWARE",       False),
+        gpu_idle_threshold         = _env_float("GPU_IDLE_THRESHOLD",    0.10),
+        enable_hpa_suspend         = _env_bool("ENABLE_HPA_SUSPEND",     True),
+        enable_auto_label          = _env_bool("ENABLE_AUTO_LABEL",      False),
+        enable_k8s_events          = _env_bool("ENABLE_K8S_EVENTS",      True),
+        webhook_url                = _env_str("WEBHOOK_URL",             ""),
+        cluster_name               = _env_str("CLUSTER_NAME",            ""),
+        enable_leader_election     = _env_bool("ENABLE_LEADER_ELECTION", True),
+        leader_lease_duration      = _env_int("LEADER_LEASE_DURATION",   30),
+        enable_preflight           = _env_bool("ENABLE_PREFLIGHT",       True),
+        acknowledge_state_loss     = _env_bool("ACKNOWLEDGE_STATE_LOSS", False),
     )

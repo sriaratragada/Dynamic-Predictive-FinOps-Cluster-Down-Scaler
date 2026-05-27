@@ -36,13 +36,19 @@ class DeploymentScaler:
         return result.items
 
     def scale_down(self, deployment: client.V1Deployment) -> int:
-        """Scale a deployment to the configured floor. Returns the original replica count."""
+        """Scale a deployment to the configured floor. Returns the original replica count.
+
+        Note: returns the *actual* current value — including the floor itself —
+        so callers can record it in the state store and restore exactly that
+        value on scale-up.  Without this, a deployment paused at 0 would be
+        silently revived to 1 replica at the next active window.
+        """
         ns = deployment.metadata.namespace
         name = deployment.metadata.name
         current = deployment.spec.replicas if deployment.spec.replicas is not None else 1
 
         if current == self._floor:
-            logger.debug("%s/%s already at floor (%d)", ns, name, self._floor)
+            logger.debug("%s/%s already at floor (%d) — recording for restore", ns, name, self._floor)
             return current
 
         self._set_replicas(ns, name, self._floor)
