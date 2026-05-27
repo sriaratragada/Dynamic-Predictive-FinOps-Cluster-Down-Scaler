@@ -155,6 +155,36 @@ def run():
         time.sleep(cfg.loop_interval_seconds)
 
 
+def _detect_stranded_workloads(scaler, state_store):
+    """
+    Find Deployments labelled ``finops.io/scaledown-eligible=true`` that are
+    currently at 0 replicas but have NO entry in the state store.
+
+    This indicates the state ConfigMap was deleted, manually edited, or
+    otherwise lost while the cluster was in a scaled-down state — without
+    intervention the controller would never restore them because
+    ``currently_scaled_down`` would evaluate False.
+
+    Returns a list of ``"<namespace>/<name>"`` strings (empty when healthy).
+    """
+    try:
+        eligible = scaler.find_eligible()
+    except Exception:
+        logger.exception("Stranded-workload check: could not list deployments")
+        return []
+
+    saved = state_store.load_replicas()
+    stranded = []
+    for dep in eligible:
+        replicas = dep.spec.replicas if dep.spec.replicas is not None else 0
+        if replicas != 0:
+            continue
+        key = f"{dep.metadata.namespace}/{dep.metadata.name}"
+        if key not in saved:
+            stranded.append(key)
+    return stranded
+
+
 def _tick(
     cfg,
     predictor,
@@ -171,6 +201,40 @@ def _tick(
         logger.warning("Lost leader lease — skipping tick and re-acquiring")
         elector.acquire_blocking()
         return
+
+    # Detect a lost state ConfigMap.  If eligible Deployments are at 0
+    # replicas with no record in state, refuse to take further scale action
+    # until an operator acknowledges (or the workloads are manually restored).
+    stranded = _detect_stranded_workloads(scaler, state_store)
+    if stranded:
+        if cfg.acknowledge_state_loss:
+            # Repopulate state with a default replica count (1) for each
+            # stranded workload.  This re-enters the normal control flow:
+            # the next active-window tick will see `currently_scaled_down=True`
+            # and call `_scale_up_cluster`, which restores each Deployment to
+            # the saved value before clearing state.
+            logger.warning(
+                "State-loss acknowledged: re-seeding state for %d stranded "
+                "deployment(s) with default replicas=1 — they will be restored "
+                "at the next active window: %s",
+                len(stranded), ", ".join(stranded[:10]),
+            )
+            for key in stranded:
+                ns, name = key.split("/", 1)
+                state_store.save_replicas(ns, name, 1)
+        else:
+            logger.error(
+                "STATE LOST: %d eligible deployment(s) are at 0 replicas with no "
+                "state record — the state ConfigMap may have been deleted or "
+                "edited manually.  Refusing to scale further to avoid stranding "
+                "workloads.  Resolve by either (a) manually scaling them back up "
+                "with `kubectl scale`, or (b) setting ACKNOWLEDGE_STATE_LOSS=true "
+                "to let the controller restore them at the next active window. "
+                "Affected: %s",
+                len(stranded), ", ".join(stranded[:10]),
+            )
+            telemetry.controller_errors.inc()
+            return
 
     now = datetime.now()
 

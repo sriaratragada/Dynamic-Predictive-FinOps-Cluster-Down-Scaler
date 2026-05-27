@@ -188,3 +188,133 @@ async def test_inflight_for_one_url_does_not_block_another():
         result = await ctrl.handle_signal("http://svc-b", "login")
     assert result["status"] == "cold"
     mock_task.assert_called_once()
+
+
+# ── Thrash protection — attempt cooldown ──────────────────────────────────────
+
+async def test_attempt_cooldown_blocks_immediate_retry_after_attempt():
+    """A second signal arriving inside the cooldown window must not fire a ping."""
+    ctrl = PrewarmController(signal_debounce_seconds=0, attempt_cooldown_seconds=30)
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        first = await ctrl.handle_signal("http://svc", "login")
+        second = await ctrl.handle_signal("http://svc", "login")
+
+    assert first["status"] == "cold"
+    assert first["action"] == "prewarm_triggered"
+    assert second["status"] == "cooldown"
+    assert second["action"] == "none"
+    assert "retry_after_s" in second
+    mock_task.assert_called_once()
+
+
+async def test_attempt_cooldown_expires_after_window():
+    ctrl = PrewarmController(signal_debounce_seconds=0, attempt_cooldown_seconds=30)
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        await ctrl.handle_signal("http://svc", "login")
+        # Manually expire cooldown — easier than mocking time.monotonic everywhere
+        ctrl._attempt_after["http://svc"] = time.monotonic() - 1
+        result = await ctrl.handle_signal("http://svc", "login")
+
+    assert result["status"] == "cold"
+    assert mock_task.call_count == 2
+
+
+async def test_attempt_cooldown_disabled_when_zero():
+    ctrl = PrewarmController(
+        signal_debounce_seconds=0, attempt_cooldown_seconds=0, rate_limit_max_attempts=0
+    )
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        await ctrl.handle_signal("http://svc", "login")
+        result = await ctrl.handle_signal("http://svc", "login")
+    # Without cooldown, second signal still hits inflight guard — but inflight
+    # only blocks while a ping is mid-flight.  In tests asyncio.create_task is
+    # discarded, so _ping never adds to _inflight.  Therefore the second signal
+    # should fire a fresh ping.
+    assert result["action"] == "prewarm_triggered"
+    assert mock_task.call_count == 2
+
+
+# ── Thrash protection — signal debounce ───────────────────────────────────────
+
+async def test_signal_debounce_collapses_rapid_identical_signals():
+    """Repeated hover events within the debounce window must collapse to one."""
+    ctrl = PrewarmController(signal_debounce_seconds=2.0, attempt_cooldown_seconds=0)
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        first = await ctrl.handle_signal("http://svc", "hover")
+        second = await ctrl.handle_signal("http://svc", "hover")
+
+    assert first["action"] == "prewarm_triggered"
+    assert second["status"] == "debounced"
+    mock_task.assert_called_once()
+
+
+async def test_signal_debounce_does_not_block_different_signal_type():
+    """Different signal types for the same URL are tracked independently."""
+    ctrl = PrewarmController(
+        signal_debounce_seconds=2.0,
+        attempt_cooldown_seconds=0,
+        rate_limit_max_attempts=0,
+    )
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        first = await ctrl.handle_signal("http://svc", "hover")
+        second = await ctrl.handle_signal("http://svc", "login")
+    assert first["action"] == "prewarm_triggered"
+    # second is not debounced (different signal_type) — it gets through
+    assert second["status"] != "debounced"
+    assert second["action"] == "prewarm_triggered"
+    assert mock_task.call_count == 2
+
+
+# ── Thrash protection — min confidence floor ──────────────────────────────────
+
+async def test_min_confidence_drops_low_signals():
+    ctrl = PrewarmController(min_confidence=0.7)
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        result = await ctrl.handle_signal("http://svc", "hover")  # confidence 0.50
+    assert result["status"] == "rejected"
+    assert result["reason"] == "below_min_confidence"
+    mock_task.assert_not_called()
+
+
+async def test_min_confidence_allows_high_signals():
+    ctrl = PrewarmController(min_confidence=0.7)
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        result = await ctrl.handle_signal("http://svc", "login")  # confidence 0.95
+    assert result["action"] == "prewarm_triggered"
+    mock_task.assert_called_once()
+
+
+# ── Thrash protection — sliding-window rate limit ─────────────────────────────
+
+async def test_rate_limit_caps_attempts_per_window():
+    """After max attempts, further signals in the window are rate-limited."""
+    ctrl = PrewarmController(
+        signal_debounce_seconds=0,
+        attempt_cooldown_seconds=0,
+        rate_limit_max_attempts=3,
+        rate_limit_window_seconds=300,
+    )
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        r1 = await ctrl.handle_signal("http://svc", "login")
+        r2 = await ctrl.handle_signal("http://svc", "login")
+        r3 = await ctrl.handle_signal("http://svc", "login")
+        r4 = await ctrl.handle_signal("http://svc", "login")
+
+    assert r1["action"] == "prewarm_triggered"
+    assert r2["action"] == "prewarm_triggered"
+    assert r3["action"] == "prewarm_triggered"
+    assert r4["status"] == "rate_limited"
+    assert r4["max_attempts"] == 3
+    assert mock_task.call_count == 3
+
+
+async def test_rate_limit_disabled_when_zero():
+    ctrl = PrewarmController(
+        signal_debounce_seconds=0,
+        attempt_cooldown_seconds=0,
+        rate_limit_max_attempts=0,
+    )
+    with patch("dashboard.backend.prewarm.asyncio.create_task", side_effect=_discard_coro) as mock_task:
+        for _ in range(10):
+            await ctrl.handle_signal("http://svc", "login")
+    assert mock_task.call_count == 10

@@ -54,6 +54,12 @@ class Config:
     leader_lease_duration: int   # seconds; renew every ~1/3 of this value
     # Pre-flight — run startup validation checks before entering the control loop.
     enable_preflight: bool
+    # State-loss acknowledgement — if the state ConfigMap is deleted manually
+    # (or otherwise reset) while eligible Deployments are at 0 replicas, the
+    # controller refuses to take any further scale action until an operator
+    # acknowledges the lost state by setting this to true.  Prevents
+    # workloads from being stranded at zero replicas indefinitely.
+    acknowledge_state_loss: bool
 
 
 def load_config() -> Config:
@@ -87,4 +93,5 @@ def load_config() -> Config:
         enable_leader_election=os.environ.get("ENABLE_LEADER_ELECTION", "true").lower() == "true",
         leader_lease_duration=int(os.environ.get("LEADER_LEASE_DURATION", "30")),
         enable_preflight=os.environ.get("ENABLE_PREFLIGHT", "true").lower() == "true",
+        acknowledge_state_loss=os.environ.get("ACKNOWLEDGE_STATE_LOSS", "false").lower() == "true",
     )

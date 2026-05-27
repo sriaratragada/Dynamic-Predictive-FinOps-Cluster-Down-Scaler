@@ -40,6 +40,7 @@ def cfg():
         enable_leader_election=True,
         leader_lease_duration=30,
         enable_preflight=True,
+        acknowledge_state_loss=False,
     )
 
 
