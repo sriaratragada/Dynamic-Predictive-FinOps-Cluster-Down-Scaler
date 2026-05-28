@@ -279,11 +279,13 @@ async def test_prewarm_disabled_by_default(client):
     assert r.json()["enabled"] is False
 
 
-async def test_prewarm_missing_service_url_returns_422(client):
-    # Enable prewarm first
+async def test_prewarm_missing_service_url_returns_not_configured(client):
     await client.patch("/api/config", json={"enable_prewarm": True})
     r = await client.post("/api/prewarm", json={})
-    assert r.status_code == 422
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "not_configured"
+    assert data["action"] == "none"
 
 
 async def test_prewarm_requires_token_when_api_token_set(client, monkeypatch):

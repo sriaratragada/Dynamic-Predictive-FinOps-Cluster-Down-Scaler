@@ -41,6 +41,13 @@ def cfg():
         leader_lease_duration=30,
         enable_preflight=True,
         acknowledge_state_loss=False,
+        prophet_shadow_mode=False,
+        enable_hpa_synergy=False,
+        hpa_spike_headroom_pct=30,
+        hpa_spike_lookahead_minutes=15,
+        enable_spot_migration=False,
+        spot_max_price_pct=80,
+        spot_eligible_label="finops.io/priority=low",
     )
 
 
