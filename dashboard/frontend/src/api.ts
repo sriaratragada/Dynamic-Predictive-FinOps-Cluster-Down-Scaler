@@ -87,6 +87,15 @@ export interface ConfigData {
   enable_spot_migration: boolean
   spot_max_price_pct: number
   spot_eligible_label: string
+  // Manual Override
+  override_mode: string
+  override_until: string
+  // Safelist
+  exclude_deployments: string
+  // Dry Run
+  dry_run: boolean
+  // Notifications
+  webhook_url: string
 }
 
 export interface ControllerStatus {
@@ -153,6 +162,27 @@ export async function saveConfig(updates: Partial<ConfigData>): Promise<ConfigDa
   })
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
   return r.json()
+}
+
+// ── Wake / Sleep ─────────────────────────────────────────────────────────────
+
+export const wakeCluster = () => _post<ControllerStatus>('/api/controller/wake', {})
+export const sleepCluster = () => _post<ControllerStatus>('/api/controller/sleep', {})
+
+// ── Dry-Run Log ──────────────────────────────────────────────────────────────
+
+export interface DryRunEntry {
+  timestamp: string
+  action: string
+  deployments: string[]
+  nodes: string[]
+}
+export const fetchDryRunLog = () => get<{ entries: DryRunEntry[] }>('/api/controller/dry-run-log')
+
+// ── Savings Export ───────────────────────────────────────────────────────────
+
+export const exportSavings = () => {
+  window.open('/api/savings/export', '_blank')
 }
 
 // ── Cloud provider types ──────────────────────────────────────────────────────

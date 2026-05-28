@@ -11,6 +11,8 @@ import Nav                 from './components/Nav'
 import ClusterPage         from './components/ClusterPage'
 import FeaturesPage        from './components/FeaturesPage'
 import PoliciesPage        from './components/PoliciesPage'
+import CommandBar          from './components/CommandBar'
+import OnboardingBanner    from './components/OnboardingBanner'
 import type { Page }       from './components/Nav'
 import { usePrewarm }      from './hooks/usePrewarm'
 
@@ -46,6 +48,11 @@ const DEFAULT_CONFIG: ConfigData = {
   enable_spot_migration:        false,
   spot_max_price_pct:           80,
   spot_eligible_label:          'finops.io/priority=low',
+  override_mode:                '',
+  override_until:               '',
+  exclude_deployments:          '',
+  dry_run:                      false,
+  webhook_url:                  '',
 }
 
 export default function App() {
@@ -159,7 +166,21 @@ export default function App() {
       ══════════════════════════════════════════════ */}
       {page === 'controller' && (
         <div key="controller">
+          <OnboardingBanner
+            config={config}
+            controllerStatus={controllerStatus}
+            onNavigate={p => setPage(p as Page)}
+          />
+
           <MetricsBar savings={savings} status={status} />
+
+          <CommandBar
+            config={config}
+            status={status}
+            controllerStatus={controllerStatus}
+            onControllerChange={s => { setControllerStatus(s); refresh() }}
+            onConfigSaved={handleConfigSaved}
+          />
 
           <DashboardConfig
             config={config}

@@ -186,6 +186,28 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
             </div>
           </section>
 
+          {/* Safelist */}
+          <section className="settings-section">
+            <div className="settings-section-header">
+              <span className="settings-section-icon">// SAFE</span>
+              App Safelist
+            </div>
+            <div className="settings-field">
+              <label className="settings-label">Never scale down these deployments</label>
+              <textarea
+                className="settings-input"
+                rows={3}
+                value={draft.exclude_deployments}
+                onChange={e => set('exclude_deployments', e.target.value)}
+                placeholder="namespace/deployment-name, one per line or comma-separated"
+                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, resize: 'vertical' }}
+              />
+              <div className="settings-hint">
+                Comma-separated list. Use "namespace/name" for specific deployments or just "name" to match across all namespaces.
+              </div>
+            </div>
+          </section>
+
           {/* LLM */}
           <section className="settings-section">
             <div className="settings-section-header">
@@ -222,6 +244,27 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
                 style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
               />
               <div className="settings-hint">Override for Azure OpenAI, local LLMs, or compatible endpoints</div>
+            </div>
+          </section>
+
+          {/* Notifications */}
+          <section className="settings-section">
+            <div className="settings-section-header">
+              <span className="settings-section-icon">// NOTIFY</span>
+              Notifications
+            </div>
+            <div className="settings-field">
+              <label className="settings-label">Webhook URL (Slack-compatible)</label>
+              <input
+                className="settings-input"
+                value={draft.webhook_url}
+                onChange={e => set('webhook_url', e.target.value)}
+                placeholder="https://hooks.slack.com/services/..."
+                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
+              />
+              <div className="settings-hint">
+                Receives a JSON POST on every scale-down and scale-up event. Works with Slack Incoming Webhooks, PagerDuty, or any HTTP receiver.
+              </div>
             </div>
           </section>
 

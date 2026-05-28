@@ -93,6 +93,8 @@ def _save_state(state: dict) -> None:
         logger.warning("State save failed: %s", exc)
 
 
+_dry_run_log: list = []
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -252,6 +254,35 @@ class ControllerRunner:
             error        = self._error,
         )
 
+    # ── Emergency scale controls ────────────────────────────────────
+
+    def force_wake(self):
+        """Force immediate scale-up regardless of schedule."""
+        state = _load_state()
+        if not state.get("replicas"):
+            logger.info("force_wake: cluster is already active")
+            with self._lock:
+                self._last_action = "force_wake (already active)"
+            return
+        self._scale_up(state)
+        with self._lock:
+            self._last_action = "force_wake"
+        logger.info("Force wake completed")
+
+    def force_sleep(self):
+        """Force immediate scale-down regardless of schedule."""
+        from . import config_store
+        state = _load_state()
+        if state.get("replicas"):
+            logger.info("force_sleep: cluster is already hibernating")
+            with self._lock:
+                self._last_action = "force_sleep (already hibernating)"
+            return
+        self._scale_down(config_store.as_dict())
+        with self._lock:
+            self._last_action = "force_sleep"
+        logger.info("Force sleep completed")
+
     # ── EKS token refresh ─────────────────────────────────────────
 
     def _start_token_refresher(self) -> None:
@@ -318,11 +349,43 @@ class ControllerRunner:
             self._stop_event.wait(timeout=interval_s)
 
     def _tick(self, cfg: dict):
-        now  = datetime.now(tz=timezone.utc)
-        low  = _is_low_activity(cfg, now)
-        state = _load_state()
-        down  = bool(state.get("replicas"))
+        now = datetime.now(tz=timezone.utc)
 
+        # Check manual override first
+        override_mode = cfg.get("override_mode", "")
+        override_until = cfg.get("override_until", "")
+        if override_mode and override_until:
+            try:
+                expiry = datetime.fromisoformat(override_until)
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                if now >= expiry:
+                    from . import config_store
+                    config_store.patch({"override_mode": "", "override_until": ""})
+                    override_mode = ""
+            except (ValueError, TypeError):
+                override_mode = ""
+
+        state = _load_state()
+        down = bool(state.get("replicas"))
+
+        if override_mode == "awake":
+            if down:
+                self._scale_up(state)
+            else:
+                with self._lock:
+                    self._last_action = "override_awake"
+            return
+        elif override_mode == "sleep":
+            if not down:
+                self._scale_down(cfg)
+            else:
+                with self._lock:
+                    self._last_action = "override_sleep"
+            return
+
+        # Normal schedule
+        low = _is_low_activity(cfg, now)
         if low and not down:
             self._scale_down(cfg)
         elif not low and down:
@@ -339,6 +402,10 @@ class ControllerRunner:
         apps     = self._apps_v1
         ns_f     = cfg.get("namespace_filter", "")
         floor    = int(cfg.get("min_replica_floor", 0))
+        dry_run  = bool(cfg.get("dry_run", False))
+
+        exclude_raw = cfg.get("exclude_deployments", "")
+        excludes = set(e.strip() for e in exclude_raw.split(",") if e.strip())
 
         logger.info("Idle window — scaling down eligible deployments")
 
@@ -351,11 +418,16 @@ class ControllerRunner:
         for dep in deps:
             ns, name = dep.metadata.namespace, dep.metadata.name
             current  = dep.spec.replicas or 0
+            key = f"{ns}/{name}"
+            if key in excludes or name in excludes:
+                logger.info("  safelist skip: %s", key)
+                continue
             if current <= floor:
                 continue
-            apps.patch_namespaced_deployment_scale(name, ns, {"spec": {"replicas": floor}})
-            saved[f"{ns}/{name}"] = current
-            logger.info("  scaled %s/%s  %d → %d", ns, name, current, floor)
+            if not dry_run:
+                apps.patch_namespaced_deployment_scale(name, ns, {"spec": {"replicas": floor}})
+            saved[key] = current
+            logger.info("  %sscaled %s/%s  %d → %d", "(dry-run) " if dry_run else "", ns, name, current, floor)
 
         # Cordon non-control-plane nodes
         cordoned = []
@@ -365,16 +437,32 @@ class ControllerRunner:
                 continue
             n_name = node.metadata.name
             if not node.spec.unschedulable:
-                core.patch_node(n_name, {"spec": {"unschedulable": True}})
+                if not dry_run:
+                    core.patch_node(n_name, {"spec": {"unschedulable": True}})
                 cordoned.append(n_name)
-                logger.info("  cordoned node: %s", n_name)
+                logger.info("  %scordoned node: %s", "(dry-run) " if dry_run else "", n_name)
 
-        _save_state({"replicas": saved, "cordoned_nodes": cordoned})
-        with self._lock:
-            self._last_action = f"scaled_down ({len(saved)} deps, {len(cordoned)} nodes)"
-        logger.info("Scale-down complete — %d dep(s), %d node(s)", len(saved), len(cordoned))
+        if dry_run:
+            now = datetime.now(tz=timezone.utc)
+            _dry_run_log.append({
+                "timestamp": now.isoformat(),
+                "action": "would_scale_down",
+                "deployments": list(saved.keys()),
+                "nodes": cordoned,
+            })
+            if len(_dry_run_log) > 100:
+                del _dry_run_log[:-100]
+            with self._lock:
+                self._last_action = f"dry_run_scale_down ({len(saved)} deps, {len(cordoned)} nodes)"
+        else:
+            _save_state({"replicas": saved, "cordoned_nodes": cordoned})
+            with self._lock:
+                self._last_action = f"scaled_down ({len(saved)} deps, {len(cordoned)} nodes)"
+        logger.info("Scale-down complete — %d dep(s), %d node(s)%s", len(saved), len(cordoned), " [DRY RUN]" if dry_run else "")
 
     def _scale_up(self, state: dict):
+        from . import config_store as _cs
+        dry_run = bool(_cs.get().dry_run)
         core = self._core_v1
         apps = self._apps_v1
 
@@ -382,25 +470,40 @@ class ControllerRunner:
 
         for n_name in state.get("cordoned_nodes", []):
             try:
-                core.patch_node(n_name, {"spec": {"unschedulable": False}})
-                logger.info("  uncordoned: %s", n_name)
+                if not dry_run:
+                    core.patch_node(n_name, {"spec": {"unschedulable": False}})
+                logger.info("  %suncordoned: %s", "(dry-run) " if dry_run else "", n_name)
             except Exception as exc:
                 logger.warning("  uncordon %s failed: %s", n_name, exc)
 
         for key, replicas in state.get("replicas", {}).items():
             ns, name = key.split("/", 1)
             try:
-                apps.patch_namespaced_deployment_scale(
-                    name, ns, {"spec": {"replicas": replicas}}
-                )
-                logger.info("  restored %s/%s → %d", ns, name, replicas)
+                if not dry_run:
+                    apps.patch_namespaced_deployment_scale(
+                        name, ns, {"spec": {"replicas": replicas}}
+                    )
+                logger.info("  %srestored %s/%s → %d", "(dry-run) " if dry_run else "", ns, name, replicas)
             except Exception as exc:
                 logger.warning("  restore %s failed: %s", key, exc)
 
-        _save_state({"replicas": {}, "cordoned_nodes": []})
-        with self._lock:
-            self._last_action = "scaled_up"
-        logger.info("Scale-up complete")
+        if dry_run:
+            now = datetime.now(tz=timezone.utc)
+            _dry_run_log.append({
+                "timestamp": now.isoformat(),
+                "action": "would_scale_up",
+                "deployments": list(state.get("replicas", {}).keys()),
+                "nodes": state.get("cordoned_nodes", []),
+            })
+            if len(_dry_run_log) > 100:
+                del _dry_run_log[:-100]
+            with self._lock:
+                self._last_action = "dry_run_scale_up"
+        else:
+            _save_state({"replicas": {}, "cordoned_nodes": []})
+            with self._lock:
+                self._last_action = "scaled_up"
+        logger.info("Scale-up complete%s", " [DRY RUN]" if dry_run else "")
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────

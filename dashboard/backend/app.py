@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import logging
 import os
 import pathlib
@@ -9,7 +11,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config_store, pricing
@@ -480,6 +482,40 @@ async def api_savings():
     }
 
 
+@app.get("/api/savings/export")
+async def api_savings_export():
+    """Export savings events as a CSV file for finance teams."""
+    cfg = config_store.get()
+
+    if cfg.demo_mode:
+        from .demo_stub import _historical_events
+        events = _historical_events()
+    elif _tracker:
+        events = _tracker.list_events()
+    else:
+        events = []
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Node", "Start (UTC)", "End (UTC)", "Duration (hours)", "Rate ($/hr)", "Saved ($)"])
+    for e in events:
+        writer.writerow([
+            e.get("node", ""),
+            e.get("start", ""),
+            e.get("end", ""),
+            round(e.get("hours", 0), 2),
+            round(e.get("rate_usd_hr", 0), 4),
+            round(e.get("saved_usd", 0), 4),
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=finops-savings-{datetime.now(tz=timezone.utc).strftime('%Y-%m-%d')}.csv"}
+    )
+
+
 # ------------------------------------------------------------------
 # Web-service: cluster connect / controller management
 # ------------------------------------------------------------------
@@ -667,6 +703,40 @@ async def api_controller_stop(_: None = Depends(require_token)):
     runner = _get_runner()
     await asyncio.to_thread(runner.stop)
     return runner.status().as_dict()
+
+
+@app.post("/api/controller/wake")
+async def api_controller_wake(_: None = Depends(require_token)):
+    """Immediately scale up the cluster regardless of schedule."""
+    runner = _get_runner()
+    status = runner.status()
+    if not status.connected:
+        raise HTTPException(status_code=409, detail="No cluster connected")
+    try:
+        await asyncio.to_thread(runner.force_wake)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return runner.status().as_dict()
+
+
+@app.post("/api/controller/sleep")
+async def api_controller_sleep(_: None = Depends(require_token)):
+    """Immediately scale down the cluster regardless of schedule."""
+    runner = _get_runner()
+    status = runner.status()
+    if not status.connected:
+        raise HTTPException(status_code=409, detail="No cluster connected")
+    try:
+        await asyncio.to_thread(runner.force_sleep)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return runner.status().as_dict()
+
+
+@app.get("/api/controller/dry-run-log")
+async def api_dry_run_log():
+    from .controller_runner import _dry_run_log
+    return {"entries": _dry_run_log[-50:]}
 
 
 # ------------------------------------------------------------------

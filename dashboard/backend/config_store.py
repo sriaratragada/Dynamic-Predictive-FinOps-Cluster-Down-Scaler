@@ -107,6 +107,19 @@ class DashboardConfig:
     enable_prewarm: bool = False
     prewarm_service_url: str = ""
 
+    # ── Manual Override ────────────────────────────────────────────
+    override_mode: str = ""  # "" = no override, "awake" = keep awake, "sleep" = force sleep
+    override_until: str = ""  # ISO-8601 datetime when override expires, empty = indefinite
+
+    # ── App Safelist ───────────────────────────────────────────────
+    exclude_deployments: str = ""  # comma-separated "ns/name" patterns to never scale down
+
+    # ── Dry Run ────────────────────────────────────────────────────
+    dry_run: bool = False  # log what would happen without actually scaling
+
+    # ── Notifications ──────────────────────────────────────────────
+    webhook_url: str = ""  # Slack-compatible webhook URL for scale event notifications
+
     # ── Spot Instance Migration ───────────────────────────────────
     enable_spot_migration: bool = False
     spot_max_price_pct: int = 80
@@ -141,6 +154,11 @@ _cfg = DashboardConfig(
     hpa_spike_lookahead_minutes  = _env_int("HPA_SPIKE_LOOKAHEAD_MINUTES", 15),
     enable_prewarm               = _env_bool("ENABLE_PREWARM",         False),
     prewarm_service_url          = _env_str("PREWARM_SERVICE_URL",     ""),
+    override_mode                = _env_str("OVERRIDE_MODE",             ""),
+    override_until               = _env_str("OVERRIDE_UNTIL",            ""),
+    exclude_deployments          = _env_str("EXCLUDE_DEPLOYMENTS",       ""),
+    dry_run                      = _env_bool("DRY_RUN",                  False),
+    webhook_url                  = _env_str("WEBHOOK_URL",               ""),
     enable_spot_migration        = _env_bool("ENABLE_SPOT_MIGRATION",  False),
     spot_max_price_pct           = _env_int("SPOT_MAX_PRICE_PCT",      80),
     spot_eligible_label          = _env_str("SPOT_ELIGIBLE_LABEL",     "finops.io/priority=low"),
