@@ -67,6 +67,7 @@ export interface ConfigData {
   prophet_training_weeks: number
   prophet_idle_threshold_cores: number
   prophet_retrain_hours: number
+  prophet_shadow_mode: boolean
   // Dashboard UX
   poll_interval_seconds: number
   node_utilisation_threshold: number
@@ -74,6 +75,18 @@ export interface ConfigData {
   min_replica_floor: number
   // Pre-Warm Engine
   enable_prewarm: boolean
+  prewarm_service_url: string
+  // LLM / Natural Language
+  openai_api_key_set: boolean
+  openai_base_url: string
+  // HPA Synergy
+  enable_hpa_synergy: boolean
+  hpa_spike_headroom_pct: number
+  hpa_spike_lookahead_minutes: number
+  // Spot Instance Migration
+  enable_spot_migration: boolean
+  spot_max_price_pct: number
+  spot_eligible_label: string
 }
 
 export interface ControllerStatus {
@@ -215,3 +228,116 @@ export const connectGke = (
     project_id: projectId, location,
     cluster_name: clusterName, service_account_json: serviceAccountJson,
   })
+
+// ── Natural Language Config API ──────────────────────────────────────────────
+
+export interface NLConfigResult {
+  config: Partial<ConfigData>
+  explanation: string
+  diff: Array<{ field: string; old: unknown; new: unknown }>
+}
+
+export const parseNaturalLanguageConfig = (prompt: string) =>
+  _post<NLConfigResult>('/api/config/natural-language', { prompt })
+
+export const applyNaturalLanguageConfig = (config: Partial<ConfigData>) =>
+  _post<ConfigData>('/api/config/natural-language/apply', { config })
+
+// ── HPA Predictions API ─────────────────────────────────────────────────────
+
+export interface HpaPrediction {
+  enabled: boolean
+  spike_predicted: boolean
+  prediction: {
+    expected_at: string
+    current_cpu: number
+    predicted_peak_cpu: number
+    minutes_away: number
+  } | null
+  headroom_pct: number
+  lookahead_minutes: number
+}
+
+export const fetchHpaPredictions = () => get<HpaPrediction>('/api/hpa/predictions')
+
+// ── Pre-Warm API ──────────────────────────────────────────────────────────────
+
+export interface PrewarmSignalResult {
+  status: string
+  action: string
+  signal: string
+  confidence?: number
+  reason?: string
+}
+
+export interface PrewarmHistoryEntry {
+  signal: string
+  timestamp: string
+  service_url: string
+  result: string
+}
+
+export const sendPrewarmSignal = (signal: string, serviceUrl = 'default') =>
+  _post<PrewarmSignalResult>('/api/prewarm', {
+    service_url: serviceUrl,
+    signal,
+    user_id: 'anonymous',
+  })
+
+export const fetchPrewarmHistory = () =>
+  get<{ history: PrewarmHistoryEntry[] }>('/api/prewarm/history')
+
+export interface PrewarmSnippet {
+  snippet: string
+  service_url: string
+}
+export const fetchPrewarmSnippet = () => get<PrewarmSnippet>('/api/prewarm/snippet')
+
+// ── Shadow Mode API ───────────────────────────────────────────────────────────
+
+export interface ShadowLogEntry {
+  timestamp: string
+  prophet_says_idle: boolean
+  schedule_says_idle: boolean
+  agreement: boolean
+  predicted_yhat: number
+}
+
+export const fetchShadowLog = () =>
+  get<{ entries: ShadowLogEntry[] }>('/api/prophet/shadow-log')
+
+// ── Policies API ──────────────────────────────────────────────────────────────
+
+export interface DownscalePolicy {
+  name: string
+  namespace: string
+  enabled: boolean
+  schedule: {
+    businessHoursStart: string
+    businessHoursEnd: string
+    businessDays: string
+    timezone: string
+  }
+  targetNamespaces: string[]
+  excludeDeployments: string[]
+  minReplicaFloor: number
+  prewarmMinutes: number
+}
+
+export const fetchPolicies = () =>
+  get<{ policies: DownscalePolicy[] }>('/api/policies')
+
+// ── Spot Migration API ────────────────────────────────────────────────────────
+
+export interface SpotStatus {
+  on_demand_nodes: number
+  spot_nodes: number
+  spot_eligible_workloads: number
+  estimated_hourly_savings: number
+  recent_interruptions: number
+  migrations_today: number
+  max_spot_price_pct: number
+}
+
+export const fetchSpotStatus = () =>
+  get<SpotStatus>('/api/spot/status')

@@ -97,6 +97,33 @@ def run():
     auto_labeller = AutoLabeller(core_api, apps_api, dry_run=cfg.dry_run) \
         if cfg.enable_auto_label else None
 
+    # Optional: CRD-based DownscalePolicy watcher
+    crd_watcher = None
+    if not _DEMO_MODE:
+        try:
+            from .crd_watcher import CRDWatcher  # noqa: PLC0415
+            custom_api = client.CustomObjectsApi()
+            crd_watcher = CRDWatcher(custom_api)
+            crd_watcher.start()
+        except Exception:
+            logger.info("CRD watcher not started (DownscalePolicy CRD may not be installed)")
+
+    # Optional: Spot Instance Migrator
+    spot_migrator = None
+    if cfg.enable_spot_migration and not _DEMO_MODE:
+        try:
+            from .spot_migrator import SpotMigrator  # noqa: PLC0415
+            spot_migrator = SpotMigrator(
+                core_api, apps_api,
+                eligible_label=cfg.spot_eligible_label,
+                max_price_pct=cfg.spot_max_price_pct,
+                dry_run=cfg.dry_run,
+            )
+            logger.info("Spot migrator initialised (label=%s, max_pct=%d)",
+                        cfg.spot_eligible_label, cfg.spot_max_price_pct)
+        except Exception:
+            logger.info("Spot migrator not started")
+
     # Optional: native K8s Events
     event_emitter = (
         K8sEventEmitter(core_api, namespace=cfg.state_configmap_ns)
@@ -148,6 +175,8 @@ def run():
                 event_emitter=event_emitter,
                 notifier=notifier,
                 elector=elector,
+                crd_watcher=crd_watcher,
+                spot_migrator=spot_migrator,
             )
         except Exception:
             telemetry.controller_errors.inc()
@@ -195,6 +224,8 @@ def _tick(
     event_emitter=None,
     notifier=None,
     elector=None,
+    crd_watcher=None,
+    spot_migrator=None,
 ):
     # Renew leader lease before doing any work; step down if we lost it
     if elector is not None and not elector.renew():
@@ -269,6 +300,35 @@ def _tick(
             "No action (low=%s, prewarm=%s, scaled_down=%s, mins_to_active=%s)",
             low, in_prewarm, currently_scaled_down, mins_to_active,
         )
+
+    # ── HPA synergy — predictive spike preparation ─────────────────
+    if cfg.enable_hpa_synergy and not low and scaler._hpa_api is not None:
+        spike = predictor.predict_traffic_spike(cfg.hpa_spike_lookahead_minutes)
+        if spike:
+            logger.info(
+                "HPA synergy: traffic spike predicted in %d min (%.2f -> %.2f cores)",
+                spike["minutes_away"], spike["current_cpu"], spike["predicted_peak_cpu"],
+            )
+            eligible = scaler.find_eligible()
+            for dep in eligible:
+                hpa = scaler.find_hpa(dep)
+                if hpa is not None:
+                    predicted_replicas = max(1, int(spike["predicted_peak_cpu"] / 0.5))
+                    original_max = scaler.prepare_hpa_for_spike(
+                        hpa, predicted_replicas, cfg.hpa_spike_headroom_pct
+                    )
+                    ns = dep.metadata.namespace
+                    name = dep.metadata.name
+                    state_store.save_hpa_min_replicas(ns, f"_max_{name}", original_max)
+
+    # ── Spot migration evaluation ──────────────────────────────────
+    if hasattr(cfg, 'enable_spot_migration') and cfg.enable_spot_migration and spot_migrator is not None:
+        try:
+            candidates = spot_migrator.discover_spot_candidates()
+            if candidates:
+                logger.info("Spot migrator: found %d eligible workloads", len(candidates))
+        except Exception:
+            logger.debug("Spot migration evaluation failed", exc_info=True)
 
 
 def _scale_down_cluster(cfg, scaler, node_mgr, state_store,

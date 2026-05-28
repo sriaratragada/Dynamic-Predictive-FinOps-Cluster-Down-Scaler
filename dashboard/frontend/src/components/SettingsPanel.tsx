@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ConfigData, ControllerStatus } from '../api'
 import { saveConfig, stopController } from '../api'
+import NLConfigBar from './NLConfigBar'
 
 interface Props {
   config: ConfigData
@@ -17,6 +18,8 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
   const [saving, setSaving] = useState(false)
   const [toast, setToast]   = useState<Toast>(null)
   const [stopping, setStopping] = useState(false)
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [savingKey, setSavingKey] = useState(false)
 
   // Close on Escape
   useEffect(() => {
@@ -68,6 +71,21 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
     }
   }
 
+  async function handleApiKeyBlur() {
+    if (!apiKeyInput) return
+    setSavingKey(true)
+    try {
+      const saved = await saveConfig({ openai_api_key: apiKeyInput } as Partial<ConfigData> as ConfigData)
+      onSaved(saved)
+      setApiKeyInput('')
+      showToast('API key saved', 'success')
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to save API key', 'error')
+    } finally {
+      setSavingKey(false)
+    }
+  }
+
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
@@ -84,6 +102,9 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
 
         {/* ── Body ── */}
         <div className="drawer-body">
+
+          {/* ── Natural-Language Config ── */}
+          <NLConfigBar config={draft} onSaved={onSaved} />
 
           {/* ── Controller status (compact, shown when connected) ── */}
           {controllerStatus?.connected && (
@@ -162,6 +183,45 @@ export default function SettingsPanel({ config, onClose, onSaved, controllerStat
                 onChange={e => set('min_replica_floor', parseInt(e.target.value) || 0)}
               />
               <div className="settings-hint">Minimum replicas during off-hours (0 = scale to zero)</div>
+            </div>
+          </section>
+
+          {/* LLM */}
+          <section className="settings-section">
+            <div className="settings-section-header">
+              <span className="settings-section-icon">// LLM</span>
+              Language Model
+            </div>
+
+            <div className="settings-field">
+              <label className="settings-label">OpenAI API Key</label>
+              <input
+                className="settings-input"
+                type="password"
+                placeholder={draft.openai_api_key_set ? '••••••••  (key set)' : 'sk-...'}
+                value={apiKeyInput}
+                onChange={e => setApiKeyInput(e.target.value)}
+                onBlur={handleApiKeyBlur}
+                disabled={savingKey}
+                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
+              />
+              <div className="settings-hint">
+                {draft.openai_api_key_set
+                  ? 'API key is configured. Paste a new key to replace it.'
+                  : 'Required for natural-language configuration. Saved immediately on blur.'}
+              </div>
+            </div>
+
+            <div className="settings-field">
+              <label className="settings-label">OpenAI Base URL</label>
+              <input
+                className="settings-input"
+                value={draft.openai_base_url}
+                onChange={e => set('openai_base_url', e.target.value)}
+                placeholder="https://api.openai.com/v1"
+                style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
+              />
+              <div className="settings-hint">Override for Azure OpenAI, local LLMs, or compatible endpoints</div>
             </div>
           </section>
 

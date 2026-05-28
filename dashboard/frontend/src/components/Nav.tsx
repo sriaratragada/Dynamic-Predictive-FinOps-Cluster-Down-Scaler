@@ -1,6 +1,6 @@
 import type { ConfigData, ControllerStatus } from '../api'
 
-export type Page = 'controller' | 'cluster' | 'features'
+export type Page = 'controller' | 'cluster' | 'features' | 'policies'
 
 interface Props {
   page:             Page
@@ -46,6 +46,14 @@ export default function Nav({ page, onChange, config, controllerStatus }: Props)
         <span className="nav-tab-tag">// AI/ML</span>
         <span className="nav-tab-label">Features</span>
         {anyFeature && <span className="nav-tab-dot nav-tab-dot--feature" />}
+      </button>
+
+      <button
+        className={`nav-tab ${page === 'policies' ? 'nav-tab--active' : ''}`}
+        onClick={() => onChange('policies')}
+      >
+        <span className="nav-tab-tag">// CRD</span>
+        <span className="nav-tab-label">Policies</span>
       </button>
 
       {/* Right: cluster status chip */}

@@ -128,3 +128,27 @@ def _gcp_rate(instance_type: str, fallback: float) -> float:
 
     logger.warning("GCP pricing: no result for %s, using fallback", instance_type)
     return fallback
+
+
+def get_spot_prices(instance_type: str = "", region: str = "") -> dict:
+    """Fetch current spot prices by AZ. Returns {az: price_per_hour}."""
+    instance_type = instance_type or os.environ.get("NODE_INSTANCE_TYPE", "m5.xlarge")
+    region = region or os.environ.get("AWS_REGION", "us-east-1")
+    try:
+        import boto3  # noqa: PLC0415
+        ec2 = boto3.client("ec2", region_name=region)
+        response = ec2.describe_spot_price_history(
+            InstanceTypes=[instance_type],
+            ProductDescriptions=["Linux/UNIX"],
+            MaxResults=20,
+        )
+        prices = {}
+        for item in response.get("SpotPriceHistory", []):
+            az = item["AvailabilityZone"]
+            price = float(item["SpotPrice"])
+            if az not in prices or price < prices[az]:
+                prices[az] = price
+        return prices
+    except Exception as exc:
+        logger.warning("Spot price fetch failed: %s", exc)
+        return {}

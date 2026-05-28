@@ -82,6 +82,7 @@ class DashboardConfig:
     prophet_training_weeks: int = 4
     prophet_idle_threshold_cores: float = 0.5
     prophet_retrain_hours: int = 6
+    prophet_shadow_mode: bool = False
 
     # ── Dashboard UX ──────────────────────────────────────────────────
     poll_interval_seconds: int = 30
@@ -89,12 +90,27 @@ class DashboardConfig:
     namespace_filter: str = ""
     min_replica_floor: int = 0
 
+    # ── LLM / Natural Language ────────────────────────────────────────
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+
+    # ── HPA Synergy ────────────────────────────────────────────────
+    enable_hpa_synergy: bool = False
+    hpa_spike_headroom_pct: int = 30
+    hpa_spike_lookahead_minutes: int = 15
+
     # ── Pre-Warm Engine (optional) ────────────────────────────────────
     # Proactively boots Knative AI containers on early user-intent signals
     # (login, hover, input focus) so the pod is warm before the user submits.
     # Enable only on high-conversion AI feature pages where cold-start delay
     # is directly user-facing.  Off by default.
     enable_prewarm: bool = False
+    prewarm_service_url: str = ""
+
+    # ── Spot Instance Migration ───────────────────────────────────
+    enable_spot_migration: bool = False
+    spot_max_price_pct: int = 80
+    spot_eligible_label: str = "finops.io/priority=low"
 
 
 _cfg = DashboardConfig(
@@ -114,10 +130,20 @@ _cfg = DashboardConfig(
     prophet_training_weeks       = _env_int("PROPHET_TRAINING_WEEKS",  4),
     prophet_idle_threshold_cores = _env_float("PROPHET_IDLE_THRESHOLD_CORES", 0.5),
     prophet_retrain_hours        = _env_int("PROPHET_RETRAIN_HOURS",   6),
+    prophet_shadow_mode          = _env_bool("PROPHET_SHADOW_MODE",    False),
     node_utilisation_threshold   = _env_float("NODE_UTILISATION_THRESHOLD", 0.10),
     namespace_filter             = _env_str("NAMESPACE_FILTER",        ""),
     min_replica_floor            = _env_int("MIN_REPLICA_FLOOR",       0),
+    openai_api_key               = _env_str("OPENAI_API_KEY",           ""),
+    openai_base_url              = _env_str("OPENAI_BASE_URL",          "https://api.openai.com/v1"),
+    enable_hpa_synergy           = _env_bool("ENABLE_HPA_SYNERGY",      False),
+    hpa_spike_headroom_pct       = _env_int("HPA_SPIKE_HEADROOM_PCT",   30),
+    hpa_spike_lookahead_minutes  = _env_int("HPA_SPIKE_LOOKAHEAD_MINUTES", 15),
     enable_prewarm               = _env_bool("ENABLE_PREWARM",         False),
+    prewarm_service_url          = _env_str("PREWARM_SERVICE_URL",     ""),
+    enable_spot_migration        = _env_bool("ENABLE_SPOT_MIGRATION",  False),
+    spot_max_price_pct           = _env_int("SPOT_MAX_PRICE_PCT",      80),
+    spot_eligible_label          = _env_str("SPOT_ELIGIBLE_LABEL",     "finops.io/priority=low"),
 )
 
 _PRICING_KEYS = {"cloud_provider", "instance_type", "aws_region", "node_hourly_cost"}
@@ -159,4 +185,6 @@ def patch(updates: Dict[str, Any]) -> DashboardConfig:
 
 
 def as_dict() -> dict:
-    return asdict(_cfg)
+    d = asdict(_cfg)
+    d["openai_api_key_set"] = bool(d.pop("openai_api_key", ""))
+    return d

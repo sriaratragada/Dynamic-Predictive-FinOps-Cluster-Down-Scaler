@@ -126,3 +126,37 @@ class DeploymentScaler:
             name, ns, {"spec": {"minReplicas": original_min}}
         )
         logger.info("Resumed HPA %s/%s: minReplicas → %d", ns, name, original_min)
+
+    # ------------------------------------------------------------------
+    # HPA spike preparation
+    # ------------------------------------------------------------------
+
+    def prepare_hpa_for_spike(self, hpa, predicted_max_replicas: int, headroom_pct: int = 30):
+        """Raise HPA maxReplicas ahead of a predicted traffic spike."""
+        ns = hpa.metadata.namespace
+        name = hpa.metadata.name
+        current_max = hpa.spec.max_replicas
+        new_max = int(predicted_max_replicas * (1 + headroom_pct / 100))
+        if new_max <= current_max:
+            logger.debug("HPA %s/%s maxReplicas %d already >= needed %d", ns, name, current_max, new_max)
+            return current_max
+        if self._dry_run:
+            logger.info("[DRY-RUN] Would raise HPA %s/%s maxReplicas %d -> %d", ns, name, current_max, new_max)
+            return current_max
+        self._hpa_api.patch_namespaced_horizontal_pod_autoscaler(
+            name, ns, {"spec": {"maxReplicas": new_max}}
+        )
+        logger.info("HPA spike prep: %s/%s maxReplicas %d -> %d (headroom %d%%)", ns, name, current_max, new_max, headroom_pct)
+        return current_max
+
+    def restore_hpa_max(self, hpa, original_max: int):
+        """Restore HPA maxReplicas after a spike window passes."""
+        ns = hpa.metadata.namespace
+        name = hpa.metadata.name
+        if self._dry_run:
+            logger.info("[DRY-RUN] Would restore HPA %s/%s maxReplicas -> %d", ns, name, original_max)
+            return
+        self._hpa_api.patch_namespaced_horizontal_pod_autoscaler(
+            name, ns, {"spec": {"maxReplicas": original_max}}
+        )
+        logger.info("HPA spike restored: %s/%s maxReplicas -> %d", ns, name, original_max)

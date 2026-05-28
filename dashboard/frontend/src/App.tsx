@@ -10,7 +10,9 @@ import DashboardConfig     from './components/DashboardConfig'
 import Nav                 from './components/Nav'
 import ClusterPage         from './components/ClusterPage'
 import FeaturesPage        from './components/FeaturesPage'
+import PoliciesPage        from './components/PoliciesPage'
 import type { Page }       from './components/Nav'
+import { usePrewarm }      from './hooks/usePrewarm'
 
 const DEFAULT_CONFIG: ConfigData = {
   prometheus_url:               'http://prometheus:9090',
@@ -29,11 +31,21 @@ const DEFAULT_CONFIG: ConfigData = {
   prophet_training_weeks:       4,
   prophet_idle_threshold_cores: 0.5,
   prophet_retrain_hours:        6,
+  prophet_shadow_mode:          false,
   poll_interval_seconds:        30,
   node_utilisation_threshold:   0.10,
   namespace_filter:             '',
   min_replica_floor:            0,
   enable_prewarm:               false,
+  prewarm_service_url:          '',
+  openai_api_key_set:           false,
+  openai_base_url:              'https://api.openai.com/v1',
+  enable_hpa_synergy:           false,
+  hpa_spike_headroom_pct:       30,
+  hpa_spike_lookahead_minutes:  15,
+  enable_spot_migration:        false,
+  spot_max_price_pct:           80,
+  spot_eligible_label:          'finops.io/priority=low',
 }
 
 export default function App() {
@@ -49,6 +61,8 @@ export default function App() {
   const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null)
   const [settingsOpen,  setSettingsOpen]  = useState(false)
   const [controllerStatus, setControllerStatus] = useState<ControllerStatus | null>(null)
+
+  usePrewarm(config.enable_prewarm, config.prewarm_service_url)
 
   const pollInterval = config.poll_interval_seconds * 1000
 
@@ -193,6 +207,15 @@ export default function App() {
       {page === 'features' && (
         <div key="features" style={{ paddingTop: 24 }}>
           <FeaturesPage config={config} onSaved={handleConfigSaved} />
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════
+          PAGE: Policies (CRD)
+      ══════════════════════════════════════════════ */}
+      {page === 'policies' && (
+        <div key="policies" style={{ paddingTop: 24 }}>
+          <PoliciesPage />
         </div>
       )}
 

@@ -75,6 +75,7 @@ class Config:
     prophet_training_weeks: int
     prophet_idle_threshold_cores: float
     prophet_retrain_hours: int
+    prophet_shadow_mode: bool
     # GPU-aware cordoning (optional — requires DCGM exporter in the cluster)
     # When enabled, nodes with nvidia.com/gpu allocatable use GPU utilisation
     # (via DCGM_FI_DEV_GPU_UTIL) instead of CPU as the cordon signal.
@@ -106,6 +107,15 @@ class Config:
     # acknowledges the lost state by setting this to true.  Prevents
     # workloads from being stranded at zero replicas indefinitely.
     acknowledge_state_loss: bool
+    # HPA synergy — proactively raise maxReplicas before predicted traffic spikes
+    enable_hpa_synergy: bool
+    hpa_spike_headroom_pct: int
+    hpa_spike_lookahead_minutes: int
+    # Spot Instance Migration — move low-priority workloads to cheaper spot
+    # instances across AZs; monitors interruption notices and falls back.
+    enable_spot_migration: bool
+    spot_max_price_pct: int
+    spot_eligible_label: str
 
 
 def load_config() -> Config:
@@ -129,6 +139,7 @@ def load_config() -> Config:
         prophet_training_weeks     = _env_int("PROPHET_TRAINING_WEEKS",  4),
         prophet_idle_threshold_cores = _env_float("PROPHET_IDLE_THRESHOLD_CORES", 0.5),
         prophet_retrain_hours      = _env_int("PROPHET_RETRAIN_HOURS",   6),
+        prophet_shadow_mode        = _env_bool("PROPHET_SHADOW_MODE",    False),
         enable_gpu_aware           = _env_bool("ENABLE_GPU_AWARE",       False),
         gpu_idle_threshold         = _env_float("GPU_IDLE_THRESHOLD",    0.10),
         enable_hpa_suspend         = _env_bool("ENABLE_HPA_SUSPEND",     True),
@@ -140,4 +151,10 @@ def load_config() -> Config:
         leader_lease_duration      = _env_int("LEADER_LEASE_DURATION",   30),
         enable_preflight           = _env_bool("ENABLE_PREFLIGHT",       True),
         acknowledge_state_loss     = _env_bool("ACKNOWLEDGE_STATE_LOSS", False),
+        enable_hpa_synergy         = _env_bool("ENABLE_HPA_SYNERGY",     False),
+        hpa_spike_headroom_pct     = _env_int("HPA_SPIKE_HEADROOM_PCT",  30),
+        hpa_spike_lookahead_minutes = _env_int("HPA_SPIKE_LOOKAHEAD_MINUTES", 15),
+        enable_spot_migration      = _env_bool("ENABLE_SPOT_MIGRATION",  False),
+        spot_max_price_pct         = _env_int("SPOT_MAX_PRICE_PCT",      80),
+        spot_eligible_label        = _env_str("SPOT_ELIGIBLE_LABEL",     "finops.io/priority=low"),
     )

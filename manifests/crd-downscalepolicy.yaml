@@ -1,0 +1,86 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: downscalepolicies.finops.io
+spec:
+  group: finops.io
+  names:
+    kind: DownscalePolicy
+    plural: downscalepolicies
+    singular: downscalepolicy
+    shortNames: ["dsp"]
+    categories: ["finops"]
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                  default: true
+                schedule:
+                  type: object
+                  properties:
+                    businessHoursStart:
+                      type: string
+                      pattern: '^\d{2}:\d{2}$'
+                    businessHoursEnd:
+                      type: string
+                      pattern: '^\d{2}:\d{2}$'
+                    businessDays:
+                      type: string
+                    timezone:
+                      type: string
+                targetNamespaces:
+                  type: array
+                  items:
+                    type: string
+                targetLabels:
+                  type: object
+                  additionalProperties:
+                    type: string
+                excludeDeployments:
+                  type: array
+                  items:
+                    type: string
+                minReplicaFloor:
+                  type: integer
+                  minimum: 0
+                prewarmMinutes:
+                  type: integer
+                  minimum: 0
+                  default: 15
+            status:
+              type: object
+              properties:
+                lastEvaluated:
+                  type: string
+                action:
+                  type: string
+                matchedDeployments:
+                  type: integer
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Enabled
+          type: boolean
+          jsonPath: .spec.enabled
+        - name: Schedule
+          type: string
+          jsonPath: .spec.schedule.businessHoursStart
+        - name: Namespaces
+          type: string
+          jsonPath: .spec.targetNamespaces
+        - name: Action
+          type: string
+          jsonPath: .status.action
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

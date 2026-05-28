@@ -37,6 +37,7 @@ import asyncio
 import logging
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Deque, Optional
 
 import httpx
@@ -72,6 +73,7 @@ class PrewarmController:
         min_confidence: float = 0.0,
         rate_limit_max_attempts: int = 5,
         rate_limit_window_seconds: int = 300,
+        history_maxlen: int = 50,
     ):
         """
         Args:
@@ -117,6 +119,7 @@ class PrewarmController:
         self._attempt_after: dict[str, float] = {}     # service_url → earliest next attempt
         self._last_signal_at: dict[tuple[str, str], float] = {}  # (url, signal) → ts
         self._attempt_history: dict[str, Deque[float]] = {}      # service_url → ping timestamps
+        self._history: deque = deque(maxlen=history_maxlen)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -145,13 +148,15 @@ class PrewarmController:
                 "Pre-warm skip — signal=%s confidence=%.2f below floor=%.2f",
                 signal_type, confidence, self._min_confidence,
             )
-            return {
+            result = {
                 "status": "rejected",
                 "action": "none",
                 "signal": signal_type,
                 "reason": "below_min_confidence",
                 "confidence": confidence,
             }
+            self._record_history(signal_type, service_url, result["status"])
+            return result
 
         # 2) Signal debounce — collapse identical fast-firing UI events
         if self._signal_debounce > 0:
@@ -162,40 +167,44 @@ class PrewarmController:
                     "Pre-warm skip — debounced %s/%s (%.2fs since last)",
                     service_url, signal_type, now - last,
                 )
-                return {
+                result = {
                     "status": "debounced",
                     "action": "none",
                     "signal": signal_type,
                 }
+                self._record_history(signal_type, service_url, result["status"])
+                return result
             self._last_signal_at[key] = now
 
         # 3) Warm cache hit — Knative already booted, nothing to do
         if self.is_warm(service_url):
             logger.debug("Pre-warm skip — %s is already warm", service_url)
-            return {"status": "warm", "action": "none", "signal": signal_type}
+            result = {"status": "warm", "action": "none", "signal": signal_type}
+            self._record_history(signal_type, service_url, result["status"])
+            return result
 
         # 4) In-flight dedup — a ping is already on the wire
         if service_url in self._inflight:
             logger.debug("Pre-warm skip — %s ping already in flight", service_url)
-            return {"status": "warming", "action": "none", "signal": signal_type}
+            result = {"status": "warming", "action": "none", "signal": signal_type}
+            self._record_history(signal_type, service_url, result["status"])
+            return result
 
         # 5) Attempt cooldown — refuse rapid re-pings after success OR failure.
-        #    This is the key thrash guard: once a ping fires, no further ping
-        #    to the same URL is allowed for `attempt_cooldown_seconds`, so a
-        #    cold service that fails to warm (or wakes briefly then dies)
-        #    cannot be re-pinged by the very next hover event.
         ready_at = self._attempt_after.get(service_url, 0.0)
         if ready_at > now:
             logger.debug(
                 "Pre-warm skip — %s in cooldown for %.1fs more",
                 service_url, ready_at - now,
             )
-            return {
+            result = {
                 "status": "cooldown",
                 "action": "none",
                 "signal": signal_type,
                 "retry_after_s": round(ready_at - now, 1),
             }
+            self._record_history(signal_type, service_url, result["status"])
+            return result
 
         # 6) Sliding-window rate limit — hard ceiling on attempts per URL
         if self._rate_max > 0 and self._over_rate_limit(service_url, now):
@@ -203,13 +212,15 @@ class PrewarmController:
                 "Pre-warm rate-limited — %s hit %d attempts in %ds; dropping signal=%s",
                 service_url, self._rate_max, self._rate_window, signal_type,
             )
-            return {
+            result = {
                 "status": "rate_limited",
                 "action": "none",
                 "signal": signal_type,
                 "max_attempts": self._rate_max,
                 "window_s": self._rate_window,
             }
+            self._record_history(signal_type, service_url, result["status"])
+            return result
 
         # All guards passed — fire the pre-warm
         self._record_attempt(service_url, now)
@@ -218,12 +229,27 @@ class PrewarmController:
             service_url, signal_type, confidence, user_id or "anonymous",
         )
         asyncio.create_task(self._ping(service_url))
-        return {
+        result = {
             "status": "cold",
             "action": "prewarm_triggered",
             "signal": signal_type,
             "confidence": confidence,
         }
+        self._record_history(signal_type, service_url, result["status"])
+        return result
+
+    def get_history(self) -> list:
+        """Return the signal history list (most recent last)."""
+        return list(self._history)
+
+    def _record_history(self, signal: str, service_url: str, result: str) -> None:
+        """Append a signal event to the history deque."""
+        self._history.append({
+            "signal": signal,
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "service_url": service_url,
+            "result": result,
+        })
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
