@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from starlette.responses import StreamingResponse
 
-from .. import config_store, deps, pricing
+from .. import config_store, deps
 from ..controller_runner import get_runner
 
 logger = logging.getLogger(__name__)

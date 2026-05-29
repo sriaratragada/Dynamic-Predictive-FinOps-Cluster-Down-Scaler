@@ -18,8 +18,6 @@ Key setup choices
   reads the env var on every request, no module reload is required.
 """
 
-import copy
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 

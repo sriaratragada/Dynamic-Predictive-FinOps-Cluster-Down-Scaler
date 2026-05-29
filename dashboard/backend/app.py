@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config_store, deps, pricing
+from . import deps, pricing
 from .k8s_client import K8sReader
 from .savings_tracker import SavingsTracker
 
