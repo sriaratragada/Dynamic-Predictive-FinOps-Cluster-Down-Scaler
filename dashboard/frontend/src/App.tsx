@@ -73,33 +73,40 @@ export default function App() {
 
   const pollInterval = config.poll_interval_seconds * 1000
 
+  // One-time fetches on mount (SSE takes over status/controller after first push)
   useEffect(() => {
     fetchConfig().then(setConfig).catch(() => {/* keep DEFAULT_CONFIG */})
+    fetchStatus().then(setStatus).catch(() => {})
+    fetchControllerStatus().then(setControllerStatus).catch(() => {})
   }, [])
 
-  // Full refresh for heavy data (capacity, history, events)
+  // Full refresh for heavy data only — status and controller come via SSE
   const refresh = useCallback(async (hours = historyHours) => {
     try {
-      const [s, c, h, sv, ev] = await Promise.all([
-        fetchStatus(), fetchCapacity(), fetchHistory(hours), fetchSavings(), fetchEvents(),
+      const [c, h, sv, ev] = await Promise.all([
+        fetchCapacity(), fetchHistory(hours), fetchSavings(), fetchEvents(),
       ])
-      setStatus(s); setCapacity(c); setHistory(h); setSavings(sv); setEvents(ev)
+      setCapacity(c); setHistory(h); setSavings(sv); setEvents(ev)
       setError(null)
-      setLastUpdated(new Date())
-      fetchControllerStatus().then(setControllerStatus).catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch data')
     }
   }, [historyHours])
 
-  // SSE for real-time lightweight updates (status, savings summary, controller)
+  // SSE — real-time status, controller, and savings summary; drives lastUpdated
   useEffect(() => {
-    const close = subscribeToStream((payload) => {
-      if (payload.status) setStatus(payload.status)
-      if (payload.controller) setControllerStatus(payload.controller)
-      setLastUpdated(new Date())
-      setError(null)
-    })
+    const close = subscribeToStream(
+      (payload) => {
+        if (payload.status) setStatus(payload.status)
+        if (payload.controller) setControllerStatus(payload.controller)
+        setLastUpdated(new Date())
+        setError(null)
+      },
+      () => {
+        // SSE dropped — mark stale so the user notices, polling will still refresh heavy data
+        setError('Live stream disconnected — reconnecting...')
+      },
+    )
     return close
   }, [])
 

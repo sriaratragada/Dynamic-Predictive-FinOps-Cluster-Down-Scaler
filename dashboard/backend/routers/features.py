@@ -2,13 +2,33 @@
 
 import logging
 import random
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import config_store, deps
 from ..auth import require_token
 from ..prewarm import get_controller as _get_prewarm
+
+# ── Public prewarm signal rate limiter ───────────────────────────────────────
+# Tracks request timestamps per IP; allows 10 signals per 10s window.
+
+_SIGNAL_WINDOW = 10.0        # seconds
+_SIGNAL_MAX    = 10          # max requests per window per IP
+_signal_hits: dict = defaultdict(list)
+
+
+def _check_signal_rate(request: Request) -> None:
+    if not request.client:
+        return  # test transport / trusted proxy — skip rate check
+    ip = request.client.host
+    now = time.monotonic()
+    _signal_hits[ip] = [t for t in _signal_hits[ip] if now - t < _SIGNAL_WINDOW]
+    if len(_signal_hits[ip]) >= _SIGNAL_MAX:
+        raise HTTPException(status_code=429, detail="Too many pre-warm signals from this client")
+    _signal_hits[ip].append(now)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -44,7 +64,8 @@ async def api_prewarm(request: Request, _: None = Depends(require_token)):
 
 @router.post("/prewarm/signal")
 async def api_prewarm_signal_public(request: Request):
-    """Public endpoint for embedded pre-warm signals (no auth required)."""
+    """Public endpoint for embedded pre-warm signals (no auth required, rate-limited)."""
+    _check_signal_rate(request)
     cfg = config_store.get()
     if not cfg.enable_prewarm:
         return {"enabled": False, "action": "none"}

@@ -385,15 +385,36 @@ export function subscribeToStream(
   onData: (data: StreamPayload) => void,
   onError?: () => void,
 ): () => void {
-  const es = new EventSource('/api/stream')
-  es.onmessage = (e) => {
-    try {
-      onData(JSON.parse(e.data))
-    } catch { /* malformed payload — skip */ }
+  let es: EventSource | null = null
+  let retryDelay = 1000   // ms, doubles on each failure up to 30s
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let cancelled = false
+
+  function connect() {
+    es = new EventSource('/api/stream')
+    es.onmessage = (e) => {
+      retryDelay = 1000    // reset backoff on successful message
+      try {
+        onData(JSON.parse(e.data))
+      } catch { /* malformed — skip */ }
+    }
+    es.onerror = () => {
+      es?.close()
+      es = null
+      if (cancelled) return
+      onError?.()
+      retryTimer = setTimeout(() => {
+        if (!cancelled) connect()
+      }, retryDelay)
+      retryDelay = Math.min(retryDelay * 2, 30_000)
+    }
   }
-  es.onerror = () => {
-    es.close()
-    onError?.()
+
+  connect()
+
+  return () => {
+    cancelled = true
+    if (retryTimer) clearTimeout(retryTimer)
+    es?.close()
   }
-  return () => es.close()
 }

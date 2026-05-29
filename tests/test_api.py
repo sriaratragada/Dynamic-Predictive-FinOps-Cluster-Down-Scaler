@@ -40,15 +40,21 @@ async def client(monkeypatch):
     from dashboard.backend import app as _app_module, config_store, deps
     from dashboard.backend.demo_stub import DemoK8sReader
 
-    # Save state
+    # Save live singletons
     original_k8s = deps._k8s
     original_tracker = deps._tracker
-    original_cfg = copy.copy(config_store._cfg)
+    original_cfg = config_store._cfg  # keep reference so we restore it
 
-    # Inject demo dependencies
+    # Reset config to a clean default state (avoids contamination from any
+    # persisted JSON left on disk by earlier test runs or sessions)
+    config_store._cfg = config_store.DashboardConfig(demo_mode=True)
+
+    # Suppress disk writes so tests don't bleed state into each other
+    monkeypatch.setattr(config_store, "_persist", lambda _cfg: None)
+
+    # Inject demo K8s reader
     deps._k8s = DemoK8sReader()
     deps._tracker = None
-    config_store._cfg.demo_mode = True
 
     async with AsyncClient(
         transport=ASGITransport(app=_app_module.app),
@@ -56,7 +62,7 @@ async def client(monkeypatch):
     ) as c:
         yield c
 
-    # Restore state
+    # Restore original live state
     deps._k8s = original_k8s
     deps._tracker = original_tracker
     config_store._cfg = original_cfg

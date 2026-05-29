@@ -18,7 +18,7 @@
 | **Knative AI pre-warm engine** | Detects user-intent signals (hover, focus, login) via embeddable JS SDK → fires async HTTP GET to Knative service → boots pod before inference request | Eliminates cold-start latency with 4-layer thrashing protection (confidence, debounce, cooldown, rate limit) |
 | **Natural-language configuration** | Users type policies in plain English → LLM parses into config patches → diff preview → one-click apply | LLM tool-use integration with human-in-the-loop approval |
 | **Custom Resource Definitions** | `DownscalePolicy` CRD lets operators define per-namespace/workload scaling policies in YAML, watched by the controller | Kubernetes-native declarative configuration — how real operators work |
-| **Full-stack dashboard** | React 18 + TypeScript + Vite SPA with physics-based SVG topology, animated KPI tiles, Recharts time-series, Apple-dark design system; SSE real-time stream supplements REST polling | Production-quality frontend with data visualization, real-time push, and responsive layout |
+| **Full-stack dashboard** | React 18 + TypeScript + Vite SPA with physics-based SVG topology, animated KPI tiles, Recharts time-series, Apple-dark design system; SSE with exponential-backoff reconnect drives real-time status; polling covers heavy data (history, capacity, events) | Production-quality frontend with real-time push, graceful reconnect, and responsive layout |
 | **Modular API** | FastAPI backend split into 7 `APIRouter` modules (health, config, connect, controller, data, features, stream) with shared `deps.py` state | Clean separation of concerns; each router independently testable |
 | **Persistent config** | `PATCH /api/config` changes auto-persist to a JSON file and survive process restarts; env vars bootstrap, runtime patches overlay | No lost settings after restarts — the operator behavior users configured stays configured |
 | **Operational safety** | Dry-run mode, manual override (keep awake/force sleep with expiry), app safelist, onboarding wizard, shadow-mode logging | Trust-building features that let teams adopt incrementally |
@@ -182,6 +182,17 @@ Controller exposes on `:8080/metrics`:
 
 ---
 
+## Known Limitations
+
+| Limitation | Detail | Mitigation |
+|:-----------|:-------|:-----------|
+| **Dashboard config ↔ in-cluster controller gap** | `PATCH /api/config` only reconfigures the embedded web-service loop. The full in-cluster `controller/main.py` reads env vars at startup and is unaware of runtime changes made via the UI. | Use in-cluster mode with env vars / Helm values for config; use web-service mode when live UI configuration is needed. |
+| **Prophet trains on the main process** | Prophet retraining is CPU-bound and runs synchronously in the controller thread. Under heavy load this can delay ticks. | Future: run training in a `ProcessPoolExecutor`; accepted tradeoff for current scope. |
+| **Spot migration is scaffolded, not battle-tested** | The spot migrator discovers candidates and logs actions but lacks end-to-end interruption signal handling. | Treat as "designed and demonstrated" rather than production-ready. |
+| **Single static Bearer token** | Auth is all-or-nothing — one token for all write operations. No user roles or per-endpoint scopes. | Acceptable for single-operator use; upgrade path is an OIDC proxy. |
+
+---
+
 ## Project Layout
 
 ```
@@ -267,6 +278,8 @@ DynaPredictingDownScaler/
 | Router-based API architecture | 7 `APIRouter` modules instead of a monolithic `app.py` — each router has one responsibility |
 | SSE over polling | `/api/stream` pushes lightweight status via Server-Sent Events — one persistent connection replaces repeated HTTP round-trips |
 | Rate-limited LLM endpoint | NL config route enforces a 5-second cooldown to prevent runaway OpenAI API costs |
-| Capped audit logs | Dry-run log uses `deque(maxlen=500)` — bounded memory, no silent OOM |
+| Rate-limited public prewarm | `/api/prewarm/signal` (unauthenticated SDK endpoint) enforces 10 req/10s per IP — prevents Knative ping saturation |
+| Capped audit logs | Dry-run log uses `deque(maxlen=500)`, savings events use `deque(maxlen=500)` — bounded memory, no silent OOM |
+| SSE auto-reconnect | Client reconnects with exponential backoff (1s → 30s) after server restarts or network drops |
 | Shadow mode for Prophet | Logs predictions vs schedule agreement rate so teams build trust before switching from clock to ML |
 | 4-layer pre-warm protection | Confidence floor → signal debounce → attempt cooldown → rate limit prevents thrashing on noisy UI events |
