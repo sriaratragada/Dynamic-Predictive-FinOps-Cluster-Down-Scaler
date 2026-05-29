@@ -37,16 +37,17 @@ async def client(monkeypatch):
     # Ensure no token auth blocks requests by default
     monkeypatch.delenv("API_TOKEN", raising=False)
 
-    from dashboard.backend import app as _app_module, config_store
+    from dashboard.backend import app as _app_module, config_store, deps
     from dashboard.backend.demo_stub import DemoK8sReader
 
     # Save state
-    original_k8s = _app_module._k8s
+    original_k8s = deps._k8s
+    original_tracker = deps._tracker
     original_cfg = copy.copy(config_store._cfg)
 
     # Inject demo dependencies
-    _app_module._k8s = DemoK8sReader()
-    _app_module._tracker = None
+    deps._k8s = DemoK8sReader()
+    deps._tracker = None
     config_store._cfg.demo_mode = True
 
     async with AsyncClient(
@@ -56,7 +57,8 @@ async def client(monkeypatch):
         yield c
 
     # Restore state
-    _app_module._k8s = original_k8s
+    deps._k8s = original_k8s
+    deps._tracker = original_tracker
     config_store._cfg = original_cfg
 
 

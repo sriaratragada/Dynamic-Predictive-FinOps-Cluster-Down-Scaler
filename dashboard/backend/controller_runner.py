@@ -29,11 +29,14 @@ import logging
 import os
 import tempfile
 import threading
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 import yaml
+
+from .schedule import is_outside_business_hours, resolve_override
 
 logger = logging.getLogger(__name__)
 
@@ -53,30 +56,6 @@ def _parse_cpu(cpu_str: str) -> float:
     return float(cpu_str)
 
 
-def _is_low_activity(cfg: dict, now: datetime) -> bool:
-    """Return True when the schedule says the cluster should be idle."""
-    import zoneinfo
-
-    tz = zoneinfo.ZoneInfo(cfg.get("timezone", "UTC"))
-    local = now.astimezone(tz)
-
-    days = [int(d) for d in cfg.get("business_days", "0,1,2,3,4").split(",") if d.strip()]
-    if local.weekday() not in days:
-        return True
-
-    def _hm(s: str) -> tuple[int, int]:
-        h, m = s.split(":")
-        return int(h), int(m)
-
-    sh, sm = _hm(cfg.get("business_hours_start", "07:00"))
-    eh, em = _hm(cfg.get("business_hours_end", "19:00"))
-    prewarm  = int(cfg.get("prewarm_minutes", 15))
-    cur_m    = local.hour * 60 + local.minute
-    start_m  = sh * 60 + sm
-    end_m    = eh * 60 + em
-    return cur_m < (start_m - prewarm) or cur_m >= end_m
-
-
 def _load_state() -> dict:
     try:
         with open(_STATE_FILE) as f:
@@ -93,7 +72,12 @@ def _save_state(state: dict) -> None:
         logger.warning("State save failed: %s", exc)
 
 
-_dry_run_log: list = []
+_dry_run_log: deque = deque(maxlen=500)
+
+
+def get_dry_run_log() -> deque:
+    """Return the capped dry-run log for the API."""
+    return _dry_run_log
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 
@@ -351,32 +335,23 @@ class ControllerRunner:
     def _tick(self, cfg: dict):
         now = datetime.now(tz=timezone.utc)
 
-        # Check manual override first
-        override_mode = cfg.get("override_mode", "")
-        override_until = cfg.get("override_until", "")
-        if override_mode and override_until:
-            try:
-                expiry = datetime.fromisoformat(override_until)
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=timezone.utc)
-                if now >= expiry:
-                    from . import config_store
-                    config_store.patch({"override_mode": "", "override_until": ""})
-                    override_mode = ""
-            except (ValueError, TypeError):
-                override_mode = ""
+        # Check manual override via shared schedule module
+        override = resolve_override(cfg, now)
+        if override != cfg.get("override_mode", ""):
+            from . import config_store
+            config_store.patch({"override_mode": "", "override_until": ""})
 
         state = _load_state()
         down = bool(state.get("replicas"))
 
-        if override_mode == "awake":
+        if override == "awake":
             if down:
                 self._scale_up(state)
             else:
                 with self._lock:
                     self._last_action = "override_awake"
             return
-        elif override_mode == "sleep":
+        elif override == "sleep":
             if not down:
                 self._scale_down(cfg)
             else:
@@ -384,8 +359,8 @@ class ControllerRunner:
                     self._last_action = "override_sleep"
             return
 
-        # Normal schedule
-        low = _is_low_activity(cfg, now)
+        # Normal schedule — delegated to shared schedule module
+        low = is_outside_business_hours(cfg, now)
         if low and not down:
             self._scale_down(cfg)
         elif not low and down:
@@ -450,8 +425,6 @@ class ControllerRunner:
                 "deployments": list(saved.keys()),
                 "nodes": cordoned,
             })
-            if len(_dry_run_log) > 100:
-                del _dry_run_log[:-100]
             with self._lock:
                 self._last_action = f"dry_run_scale_down ({len(saved)} deps, {len(cordoned)} nodes)"
         else:
@@ -495,8 +468,6 @@ class ControllerRunner:
                 "deployments": list(state.get("replicas", {}).keys()),
                 "nodes": state.get("cordoned_nodes", []),
             })
-            if len(_dry_run_log) > 100:
-                del _dry_run_log[:-100]
             with self._lock:
                 self._last_action = "dry_run_scale_up"
         else:

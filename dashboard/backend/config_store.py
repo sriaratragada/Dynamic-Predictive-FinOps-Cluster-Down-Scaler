@@ -13,9 +13,18 @@ intentionally self-contained and does not import the controller package
 so each Docker image can ship without the other.  Keep defaults in
 sync with ``.env.example``.
 """
+import json
+import logging
 import os
+import tempfile
 from dataclasses import dataclass, asdict
 from typing import Any, Dict
+
+_log = logging.getLogger(__name__)
+_CONFIG_FILE = os.environ.get(
+    "FINOPS_CONFIG_FILE",
+    os.path.join(tempfile.gettempdir(), "finops-dashboard-config.json"),
+)
 
 
 # ── Env-var coercion helpers ──────────────────────────────────────────────────
@@ -126,6 +135,27 @@ class DashboardConfig:
     spot_eligible_label: str = "finops.io/priority=low"
 
 
+def _load_persisted() -> dict:
+    """Load previously persisted config patches from disk."""
+    try:
+        with open(_CONFIG_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _persist(cfg_obj: "DashboardConfig") -> None:
+    """Write config to disk so it survives restarts.  Never persists secrets."""
+    try:
+        d = asdict(cfg_obj)
+        d.pop("openai_api_key", None)
+        with open(_CONFIG_FILE, "w") as f:
+            json.dump(d, f, indent=2)
+    except Exception as exc:
+        _log.warning("Config persist failed: %s", exc)
+
+
+# Build config: env vars first, then overlay any persisted patches.
 _cfg = DashboardConfig(
     prometheus_url               = _env_str("PROMETHEUS_URL",        "http://prometheus:9090"),
     demo_mode                    = _env_bool("DEMO_MODE",             False),
@@ -164,6 +194,24 @@ _cfg = DashboardConfig(
     spot_eligible_label          = _env_str("SPOT_ELIGIBLE_LABEL",     "finops.io/priority=low"),
 )
 
+# Overlay any previously persisted patches (env vars take precedence on first boot,
+# but runtime PATCH changes survive restarts via this file).
+_persisted = _load_persisted()
+if _persisted:
+    _log.info("Restoring %d persisted config field(s) from %s", len(_persisted), _CONFIG_FILE)
+    for k, v in _persisted.items():
+        if hasattr(_cfg, k) and k != "openai_api_key":
+            current = getattr(_cfg, k)
+            if isinstance(current, bool):
+                v = bool(v)
+            elif isinstance(current, int):
+                v = int(v)
+            elif isinstance(current, float):
+                v = float(v)
+            else:
+                v = str(v)
+            setattr(_cfg, k, v)
+
 _PRICING_KEYS = {"cloud_provider", "instance_type", "aws_region", "node_hourly_cost"}
 
 
@@ -199,6 +247,7 @@ def patch(updates: Dict[str, Any]) -> DashboardConfig:
         except Exception:
             pass
 
+    _persist(_cfg)
     return _cfg
 
 

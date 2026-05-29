@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig, fetchEvents, fetchControllerStatus } from './api'
+import { fetchStatus, fetchCapacity, fetchHistory, fetchSavings, fetchConfig, fetchEvents, fetchControllerStatus, subscribeToStream } from './api'
 import type { StatusData, CapacityData, HistoryData, SavingsData, ConfigData, EventsData, ControllerStatus } from './api'
 import MetricsBar          from './components/MetricsBar'
 import NodeTopology        from './components/NodeTopology'
@@ -77,6 +77,7 @@ export default function App() {
     fetchConfig().then(setConfig).catch(() => {/* keep DEFAULT_CONFIG */})
   }, [])
 
+  // Full refresh for heavy data (capacity, history, events)
   const refresh = useCallback(async (hours = historyHours) => {
     try {
       const [s, c, h, sv, ev] = await Promise.all([
@@ -91,6 +92,18 @@ export default function App() {
     }
   }, [historyHours])
 
+  // SSE for real-time lightweight updates (status, savings summary, controller)
+  useEffect(() => {
+    const close = subscribeToStream((payload) => {
+      if (payload.status) setStatus(payload.status)
+      if (payload.controller) setControllerStatus(payload.controller)
+      setLastUpdated(new Date())
+      setError(null)
+    })
+    return close
+  }, [])
+
+  // Polling fallback for heavy data (capacity, history, events, full savings)
   useEffect(() => {
     refresh()
     const id = setInterval(() => refresh(), pollInterval)

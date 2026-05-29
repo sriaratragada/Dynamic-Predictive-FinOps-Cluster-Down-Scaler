@@ -371,3 +371,29 @@ export interface SpotStatus {
 
 export const fetchSpotStatus = () =>
   get<SpotStatus>('/api/spot/status')
+
+// ── SSE (Server-Sent Events) ─────────────────────────────────────────────────
+
+export interface StreamPayload {
+  status: StatusData
+  savings: { total_saved_usd: number; this_month_usd: number; currently_cordoned_count: number }
+  controller: ControllerStatus
+  ts: string
+}
+
+export function subscribeToStream(
+  onData: (data: StreamPayload) => void,
+  onError?: () => void,
+): () => void {
+  const es = new EventSource('/api/stream')
+  es.onmessage = (e) => {
+    try {
+      onData(JSON.parse(e.data))
+    } catch { /* malformed payload — skip */ }
+  }
+  es.onerror = () => {
+    es.close()
+    onError?.()
+  }
+  return () => es.close()
+}
