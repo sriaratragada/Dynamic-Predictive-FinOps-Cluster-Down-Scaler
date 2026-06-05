@@ -1,4 +1,4 @@
-# Dynamic Predictive FinOps Cluster Down-Scaler
+# FinOps Cluster Down-Scaler
 
 > **Automatically hibernate your Kubernetes cluster during off-hours — then wake it back up before your team arrives.**
 
@@ -24,7 +24,7 @@
 
 ```bash
 git clone <repo-url>
-cd DynaPredictingDownScaler
+cd FinOps-Kubernetes-Cluster-Controller
 docker compose up        # or:  make demo
 ```
 
